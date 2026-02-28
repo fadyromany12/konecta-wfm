@@ -16,7 +16,7 @@ cd backend
 npm run setup-db
 ```
 
-This runs `schema.sql`, `seed.sql`, and `sql/migrations_extra.sql` in order.
+This runs `schema.sql`, `seed.sql`, `sql/migrations_extra.sql`, and `sql/migrations_enterprise.sql` in order.
 
 **Option B – Manual with psql**  
 From project root:
@@ -25,6 +25,7 @@ From project root:
 psql -U konecta -d konecta_wfm -f backend/schema.sql
 psql -U konecta -d konecta_wfm -f backend/seed.sql
 psql -U konecta -d konecta_wfm -f backend/sql/migrations_extra.sql
+psql -U konecta -d konecta_wfm -f backend/sql/migrations_enterprise.sql
 ```
 
 On Windows if `psql` is not in PATH, use the full path to `psql.exe` or run `backend\setup-db.cmd` (after editing it to point to your PostgreSQL `bin` folder).
@@ -71,7 +72,7 @@ All emails must be `@konecta.com`.
 
 1. **Database**
    - Create a PostgreSQL database.
-   - Run in order: `schema.sql` → `seed.sql` → `sql/migrations_extra.sql`.
+   - Run in order: `schema.sql` → `seed.sql` → `sql/migrations_extra.sql` → `sql/migrations_enterprise.sql`.
 
 2. **Backend**
    - Set `NODE_ENV=production`.
@@ -142,8 +143,10 @@ A workflow under `.github/workflows/ci.yml` runs **builds** on every push (front
 ## Features
 
 - **Agent:** Clock in/out, AUX (break, lunch, etc. — break/lunch/last break once per day), leave requests (sick with file upload, overtime with start/end time), schedule, shift swap, profile.
-- **Manager:** Team dashboard, leave and shift-swap approvals, schedule, team.
-- **Admin:** Users, CSV exports (attendance, leave, AUX, overtime), schedule import and edit, audit logs, settings (holidays, departments, announcements), notifications.
+- **Manager:** Team dashboard, **live wallboard**, leave and shift-swap approvals, schedule, team, **manager notes**, **disciplinary tracking**, **team attendance scores**, **alerts**.
+- **Admin:** Users, CSV exports (attendance, leave, AUX, overtime, **payroll**), **wallboard**, schedule import and edit, audit logs, settings (holidays, departments, announcements), notifications, **system alerts**.
+
+**Enterprise:** Payroll export (worked hours, overtime, leave deductions), wallboard (agents online/on break/late/overtime), manager notes & disciplinary, attendance scores, system alerts. Email: use Brevo SMTP (see `.env.example`).
 
 ---
 
@@ -154,3 +157,4 @@ A workflow under `.github/workflows/ci.yml` runs **builds** on every push (front
 - `backend/schema.sql` — Base tables (run first).
 - `backend/seed.sql` — Default users (admin, manager, agent).
 - `backend/sql/migrations_extra.sql` — Extra tables (holidays, departments, announcements, password reset).
+- `backend/sql/migrations_enterprise.sql` — Enterprise tables (attendance_scores, manager_notes, disciplinary_actions, payroll_exports, system_alerts, chat_messages).

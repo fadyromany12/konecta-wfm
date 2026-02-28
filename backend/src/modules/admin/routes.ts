@@ -245,4 +245,72 @@ router.put("/schedules", async (req: AuthRequest, res) => {
   }
 });
 
+// ——— Enterprise: Payroll export (worked hours, overtime, leave deductions) ———
+router.get("/payroll/export", async (req: AuthRequest, res) => {
+  try {
+    const from = (req.query.from as string) || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const to = (req.query.to as string) || new Date().toISOString().slice(0, 10);
+    const { rows: attendanceRows } = await query(
+      `SELECT u.id AS user_id, u.first_name, u.last_name, u.email,
+              SUM(EXTRACT(EPOCH FROM a.total_hours) / 3600) AS regular_hours,
+              SUM(EXTRACT(EPOCH FROM a.overtime_duration) / 3600) AS overtime_hours
+       FROM users u
+       LEFT JOIN attendance a ON a.user_id = u.id AND a.shift_date >= $1 AND a.shift_date <= $2 AND a.clock_out IS NOT NULL
+       WHERE u.role = 'agent'
+       GROUP BY u.id, u.first_name, u.last_name, u.email`,
+      [from, to],
+    );
+    const { rows: leaveRows } = await query(
+      `SELECT user_id, SUM((end_date - start_date + 1)) AS leave_days
+       FROM leave_requests WHERE status = 'approved' AND start_date <= $2 AND end_date >= $1 GROUP BY user_id`,
+      [from, to],
+    );
+    const leaveMap: Record<string, number> = {};
+    leaveRows.forEach((r: any) => (leaveMap[r.user_id] = Number(r.leave_days) || 0));
+    const csvHeader = "user_id,first_name,last_name,email,period_start,period_end,regular_hours,overtime_hours,leave_days";
+    const csvLines = attendanceRows.map((r: any) => [
+      r.user_id,
+      r.first_name,
+      r.last_name,
+      r.email,
+      from,
+      to,
+      (Number(r.regular_hours) || 0).toFixed(2),
+      (Number(r.overtime_hours) || 0).toFixed(2),
+      leaveMap[r.user_id] ?? 0,
+    ].map(String).map(escapeCsv).join(","));
+    res.setHeader("Content-Type", "text/csv");
+    res.setHeader("Content-Disposition", `attachment; filename=payroll-${from}-${to}.csv`);
+    return res.send([csvHeader, ...csvLines].join("\r\n"));
+  } catch (err: any) {
+    return res.status(400).json({ error: { message: err.message || "Payroll export failed" } });
+  }
+});
+
+// ——— Enterprise: System alerts (admin) ———
+router.get("/alerts", async (req: AuthRequest, res) => {
+  try {
+    const resolved = req.query.resolved as string | undefined;
+    let sql = `SELECT sa.*, u.first_name, u.last_name, u.email FROM system_alerts sa LEFT JOIN users u ON sa.user_id = u.id WHERE 1=1`;
+    const params: any[] = [];
+    if (resolved === "true") { sql += ` AND sa.resolved = true`; }
+    else if (resolved === "false") { sql += ` AND sa.resolved = false`; }
+    sql += ` ORDER BY sa.created_at DESC LIMIT 200`;
+    const { rows } = await query(sql, params);
+    return res.json(rows);
+  } catch (err: any) {
+    return res.status(400).json({ error: { message: err.message || "Failed" } });
+  }
+});
+
+router.patch("/alerts/:id/resolve", async (req: AuthRequest, res) => {
+  try {
+    const { rows } = await query(`UPDATE system_alerts SET resolved = true WHERE id = $1 RETURNING id`, [req.params.id]);
+    if (!rows.length) return res.status(404).json({ error: { message: "Alert not found" } });
+    return res.json({ message: "Resolved" });
+  } catch (err: any) {
+    return res.status(400).json({ error: { message: err.message || "Failed" } });
+  }
+});
+
 export default router;

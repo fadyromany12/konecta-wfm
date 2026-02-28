@@ -44,17 +44,13 @@ export default function AdminReportsPage() {
     else if (user.role !== "admin") router.replace("/");
   }, [user, router]);
 
-  async function handleExport(type: "attendance" | "leave" | "aux" | "overtime") {
+  async function handleExport(type: "attendance" | "leave" | "aux" | "overtime" | "payroll") {
     if (!token) return;
     setError(null);
     setLoading(type);
     try {
-      await downloadExport(
-        `/admin/export/${type}`,
-        `${type}-${from}-${to}.csv`,
-        token,
-        { from, to },
-      );
+      const path = type === "payroll" ? "/admin/payroll/export" : `/admin/export/${type}`;
+      await downloadExport(path, `${type}-${from}-${to}.csv`, token, { from, to });
       toast.success("Download started");
     } catch (e) {
       const msg = (e as Error).message || "Export failed";
@@ -142,6 +138,14 @@ export default function AdminReportsPage() {
             className="btn-outline"
           >
             {loading === "overtime" ? "Downloading…" : "Overtime CSV"}
+          </button>
+          <button
+            type="button"
+            onClick={() => handleExport("payroll")}
+            disabled={!!loading}
+            className="rounded-xl border border-emerald-600 bg-emerald-900/30 px-4 py-2 text-sm font-medium text-emerald-400 transition-colors hover:bg-emerald-800/40"
+          >
+            {loading === "payroll" ? "Downloading…" : "Payroll Export"}
           </button>
         </div>
       </div>

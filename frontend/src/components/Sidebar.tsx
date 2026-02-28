@@ -14,6 +14,7 @@ const agentNav = [
 
 const managerNav = [
   { href: "/manager/dashboard", label: "Team Dashboard" },
+  { href: "/manager/wallboard", label: "Wallboard" },
   { href: "/manager/approvals", label: "Approvals" },
   { href: "/manager/reports", label: "Reports" },
   { href: "/manager/schedule", label: "Schedule" },
@@ -23,6 +24,7 @@ const managerNav = [
 const adminNav = [
   { href: "/admin/users", label: "All Users" },
   { href: "/admin/reports", label: "System Reports" },
+  { href: "/admin/wallboard", label: "Wallboard" },
   { href: "/admin/schedule", label: "Schedule Management" },
   { href: "/admin/audit", label: "Audit Logs" },
   { href: "/admin/settings", label: "Settings" },

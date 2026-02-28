@@ -19,6 +19,7 @@ import notificationsRoutes from "./modules/notifications/routes";
 import holidaysRoutes from "./modules/holidays/routes";
 import departmentsRoutes from "./modules/departments/routes";
 import announcementsRoutes from "./modules/announcements/routes";
+import wallboardRoutes from "./modules/wallboard/routes";
 
 const app = express();
 
@@ -66,6 +67,7 @@ app.use("/api/notifications", notificationsRoutes);
 app.use("/api/holidays", holidaysRoutes);
 app.use("/api/departments", departmentsRoutes);
 app.use("/api/announcements", announcementsRoutes);
+app.use("/api/wallboard", wallboardRoutes);
 
 app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error("Unhandled error:", err);
