@@ -3,10 +3,77 @@ import { authenticateJWT, AuthRequest, requireRole } from "../../middleware/auth
 import { query } from "../../db/pool";
 import { getTeamSchedulesByManager } from "../schedules/repository";
 import { createNotification } from "../notifications/repository";
+import { approveAgentAndSetTempPassword, setTempPasswordForUser } from "../auth/service";
 
 const router = Router();
 
 router.use(authenticateJWT, requireRole(["manager"]));
+
+// Pending agent approvals (manager sees agents who report to them and are not approved)
+router.get("/pending-approvals", async (req: AuthRequest, res) => {
+  const managerId = req.user!.sub;
+  try {
+    const { rows } = await query(
+      `SELECT id, first_name, last_name, email, created_at FROM users WHERE manager_id = $1 AND is_approved = false AND role = 'agent' ORDER BY created_at DESC`,
+      [managerId],
+    );
+    return res.json(rows);
+  } catch (err: any) {
+    return res.status(400).json({ error: { message: err.message || "Failed" } });
+  }
+});
+
+router.post("/approve/:userId", async (req: AuthRequest, res) => {
+  const managerId = req.user!.sub;
+  const { userId } = req.params;
+  try {
+    const { rows } = await query(
+      `SELECT id FROM users WHERE id = $1 AND manager_id = $2 AND is_approved = false`,
+      [userId, managerId],
+    );
+    if (!rows.length) return res.status(404).json({ error: { message: "User not found or not your report" } });
+    const { tempPassword } = await approveAgentAndSetTempPassword(userId);
+    const { rows: u } = await query(`SELECT first_name, last_name FROM users WHERE id = $1`, [userId]);
+    await createNotification(userId, "Your account has been approved. Use the temporary password your manager gave you, then change it in Profile.", "approved");
+    return res.json({ message: "Approved", tempPassword, userName: u[0] ? `${u[0].first_name} ${u[0].last_name}` : "" });
+  } catch (err: any) {
+    return res.status(400).json({ error: { message: err.message || "Approve failed" } });
+  }
+});
+
+// Password reset requests (my team only)
+router.get("/password-reset-requests", async (req: AuthRequest, res) => {
+  const managerId = req.user!.sub;
+  try {
+    const { rows } = await query(
+      `SELECT prr.id, prr.user_id, prr.requested_at, u.first_name, u.last_name, u.email
+       FROM password_reset_requests prr
+       JOIN users u ON u.id = prr.user_id
+       WHERE u.manager_id = $1 AND prr.handled_at IS NULL ORDER BY prr.requested_at DESC`,
+      [managerId],
+    );
+    return res.json(rows);
+  } catch (err: any) {
+    return res.status(400).json({ error: { message: err.message || "Failed" } });
+  }
+});
+
+router.post("/set-temp-password/:userId", async (req: AuthRequest, res) => {
+  const managerId = req.user!.sub;
+  const { userId } = req.params;
+  try {
+    const { rows } = await query(
+      `SELECT id FROM users WHERE id = $1 AND manager_id = $2`,
+      [userId, managerId],
+    );
+    if (!rows.length) return res.status(404).json({ error: { message: "User not found or not your report" } });
+    const { tempPassword } = await setTempPasswordForUser(managerId, userId);
+    await createNotification(userId, "A new temporary password has been set for you. Log in and change it in Profile.", "temp_password");
+    return res.json({ message: "Temp password set", tempPassword });
+  } catch (err: any) {
+    return res.status(400).json({ error: { message: err.message || "Failed" } });
+  }
+});
 
 // List team members (users where manager_id = current user)
 router.get("/team", async (req: AuthRequest, res) => {

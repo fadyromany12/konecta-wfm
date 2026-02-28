@@ -18,7 +18,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
     hydrate();
   }, [hydrate]);
 
-  const isAuthPage = ["/login", "/register", "/forgot-password", "/reset-password", "/verify-email"].includes(pathname);
+  const isAuthPage = ["/login", "/register", "/forgot-password", "/reset-password", "/verify-email", "/pending"].includes(pathname);
   const showSidebar = user && !isAuthPage;
 
   return (

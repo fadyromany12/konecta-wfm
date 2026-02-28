@@ -1,9 +1,20 @@
 import { Router } from "express";
-import { registerSchema, loginSchema, forgotPasswordSchema, resetPasswordSchema } from "./schemas";
-import { loginUser, registerUser, verifyEmailToken, forgotPassword, resetPasswordWithToken } from "./service";
+import { registerSchema, loginSchema, forgotPasswordSchema, resetPasswordSchema, changePasswordSchema } from "./schemas";
+import { loginUser, registerUser, verifyEmailToken, forgotPassword, resetPasswordWithToken, changePassword } from "./service";
 import { logAudit } from "../../lib/audit";
+import { getManagers } from "../users/userRepository";
+import { authenticateJWT, AuthRequest } from "../../middleware/auth";
 
 const router = Router();
+
+router.get("/managers", async (_req, res) => {
+  try {
+    const list = await getManagers();
+    return res.json(list);
+  } catch (err: any) {
+    return res.status(400).json({ error: { message: err.message || "Failed" } });
+  }
+});
 
 router.post("/register", async (req, res) => {
   const parseResult = registerSchema.safeParse(req.body);
@@ -12,9 +23,15 @@ router.post("/register", async (req, res) => {
   }
 
   try {
-    const user = await registerUser(parseResult.data);
+    const user = await registerUser({
+      firstName: parseResult.data.firstName,
+      lastName: parseResult.data.lastName,
+      email: parseResult.data.email,
+      password: parseResult.data.password,
+      managerId: parseResult.data.managerId ?? null,
+    });
     return res.status(201).json({
-      message: "Registration successful. Please check your email to activate your account.",
+      message: "Registration submitted. Your manager and admin will approve your account. You can log in to see status.",
       user: {
         id: user.id,
         first_name: user.first_name,
@@ -35,16 +52,19 @@ router.post("/login", async (req, res) => {
   }
 
   try {
-    const { user, token } = await loginUser(parseResult.data);
-    await logAudit("login", user.id, { email: user.email }, req.ip);
+    const result = await loginUser(parseResult.data);
+    const { user, token, pendingApproval } = result;
+    await logAudit("login", user.id, { email: user.email, pendingApproval: !!pendingApproval }, req.ip);
     return res.json({
       token,
+      pendingApproval: pendingApproval ?? false,
       user: {
         id: user.id,
         first_name: user.first_name,
         last_name: user.last_name,
         email: user.email,
         role: user.role,
+        force_password_change: user.force_password_change,
       },
     });
   } catch (err: any) {
@@ -60,9 +80,22 @@ router.post("/forgot-password", async (req, res) => {
   }
   const result = await forgotPassword(parseResult.data.email);
   return res.json({
-    message: "If that email exists, a reset link has been sent.",
-    ...(result && { resetToken: result.token }),
+    message: "If that account exists, your manager or admin will set a temporary password for you. Contact them or check back after they approve.",
+    ...(result && { requested: result.requested }),
   });
+});
+
+router.post("/change-password", authenticateJWT, async (req: AuthRequest, res) => {
+  const parseResult = changePasswordSchema.safeParse(req.body);
+  if (!parseResult.success) {
+    return res.status(400).json({ error: parseResult.error.flatten() });
+  }
+  try {
+    await changePassword(req.user!.sub, parseResult.data.currentPassword, parseResult.data.newPassword);
+    return res.json({ message: "Password updated." });
+  } catch (err: any) {
+    return res.status(400).json({ error: { message: err.message || "Change password failed" } });
+  }
 });
 
 router.post("/reset-password", async (req, res) => {

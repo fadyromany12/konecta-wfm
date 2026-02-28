@@ -11,10 +11,17 @@ interface UserRow {
   last_name: string;
   email: string;
   role: string;
+  role_id: string | null;
   status: string;
   manager_id: string | null;
   is_approved: boolean;
   created_at: string;
+}
+
+interface RoleOption {
+  id: string;
+  name: string;
+  description: string | null;
 }
 
 export default function AdminUsersPage() {
@@ -22,8 +29,10 @@ export default function AdminUsersPage() {
   const user = useAuthStore((s) => s.user);
   const token = useAuthStore((s) => s.token);
   const [users, setUsers] = useState<UserRow[]>([]);
+  const [roles, setRoles] = useState<RoleOption[]>([]);
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState("");
+  const [updatingRoleId, setUpdatingRoleId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!user || !token) {
@@ -41,12 +50,29 @@ export default function AdminUsersPage() {
     if (!token) return;
     setLoading(true);
     try {
-      const data = await apiRequest<UserRow[]>("/admin/users", {}, token);
+      const [data, rolesRes] = await Promise.all([
+        apiRequest<UserRow[]>("/admin/users", {}, token),
+        apiRequest<{ roles: RoleOption[] }>("/admin/roles", {}, token),
+      ]);
       setUsers(data);
+      setRoles(rolesRes.roles || []);
     } catch {
       setUsers([]);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function changeRole(userId: string, roleId: string) {
+    if (!token) return;
+    setUpdatingRoleId(userId);
+    try {
+      await apiRequest(`/admin/users/${userId}/role`, { method: "PATCH", body: JSON.stringify({ roleId }) }, token);
+      setUsers((prev) => prev.map((u) => (u.id === userId ? { ...u, role_id: roleId, role: roles.find((r) => r.id === roleId)?.name ?? u.role } : u)));
+    } catch {
+      // keep previous
+    } finally {
+      setUpdatingRoleId(null);
     }
   }
 
@@ -107,7 +133,16 @@ export default function AdminUsersPage() {
                   </td>
                   <td className="p-2 text-slate-300">{u.email}</td>
                   <td className="p-2">
-                    <span className="capitalize text-slate-300">{u.role}</span>
+                    <select
+                      value={u.role_id || ""}
+                      onChange={(e) => { const v = e.target.value; if (v) changeRole(u.id, v); }}
+                      disabled={!!updatingRoleId}
+                      className="rounded border border-slate-600 bg-slate-800 px-2 py-1 text-sm text-slate-200"
+                    >
+                      {roles.map((r) => (
+                        <option key={r.id} value={r.id}>{r.name}</option>
+                      ))}
+                    </select>
                   </td>
                   <td className="p-2">
                     <span

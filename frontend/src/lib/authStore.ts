@@ -5,7 +5,8 @@ interface User {
   first_name: string;
   last_name: string;
   email: string;
-  role: "agent" | "manager" | "admin";
+  role: string;
+  force_password_change?: boolean;
 }
 
 interface AuthState {

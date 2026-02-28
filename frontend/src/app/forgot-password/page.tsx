@@ -6,7 +6,7 @@ import { apiRequest } from "../../lib/api";
 
 interface ForgotResponse {
   message: string;
-  resetToken?: string;
+  requested?: boolean;
 }
 
 export default function ForgotPasswordPage() {
@@ -14,19 +14,17 @@ export default function ForgotPasswordPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sent, setSent] = useState(false);
-  const [devToken, setDevToken] = useState<string | null>(null);
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
     setError(null);
     setLoading(true);
     try {
-      const res = await apiRequest<ForgotResponse>("/auth/forgot-password", {
+      await apiRequest<ForgotResponse>("/auth/forgot-password", {
         method: "POST",
         body: JSON.stringify({ email: email.trim().toLowerCase() }),
       });
       setSent(true);
-      if (res.resetToken) setDevToken(res.resetToken);
     } catch {
       setError("Something went wrong. Try again.");
     } finally {
@@ -38,15 +36,10 @@ export default function ForgotPasswordPage() {
     return (
       <div className="flex min-h-[85vh] items-center justify-center px-4">
         <div className="card w-full max-w-md border-brand/20 text-center shadow-2xl shadow-black/30">
-          <h1 className="text-2xl font-bold tracking-tight text-white">Check your email</h1>
+          <h1 className="text-2xl font-bold tracking-tight text-white">Request received</h1>
           <p className="mb-6 text-slate-400">
-            If an account exists for <strong className="text-slate-200">{email}</strong>, we sent a password reset link.
+            If an account exists for <strong className="text-slate-200">{email}</strong>, your manager or admin will set a temporary password for you. Contact them or log in after they have set it, then change it in <strong className="text-slate-200">Profile</strong>.
           </p>
-          {devToken && (
-            <p className="mb-4 rounded bg-slate-800 p-3 text-left text-xs text-slate-400">
-              Dev: use this token on the reset page: <code className="break-all text-amber-300">{devToken}</code>
-            </p>
-          )}
           <Link href="/login" className="btn-primary inline-block">
             Back to sign in
           </Link>
@@ -60,7 +53,7 @@ export default function ForgotPasswordPage() {
       <div className="card w-full max-w-md border-brand/20 shadow-2xl shadow-black/30">
         <h1 className="text-2xl font-bold tracking-tight text-white">Forgot password</h1>
         <p className="mt-2 mb-6 text-slate-400">
-          Enter your Konecta email and we’ll send a reset link.
+          Enter your Konecta email. Your manager or admin will set a temporary password for you.
         </p>
         <form onSubmit={onSubmit} className="space-y-4">
           <div>

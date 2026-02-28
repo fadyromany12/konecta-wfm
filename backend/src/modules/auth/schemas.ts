@@ -12,11 +12,20 @@ export const registerSchema = z
       .min(8)
       .regex(/\d/, "Password must contain at least one number"),
     confirmPassword: z.string().min(8),
+    managerId: z.string().uuid().nullable().optional(),
   })
   .refine((data) => data.password === data.confirmPassword, {
     message: "Passwords do not match",
     path: ["confirmPassword"],
   });
+
+export const changePasswordSchema = z.object({
+  currentPassword: z.string().min(1),
+  newPassword: z
+    .string()
+    .min(8)
+    .regex(/\d/, "Password must contain at least one number"),
+});
 
 export const loginSchema = z.object({
   email: z.string().email(),

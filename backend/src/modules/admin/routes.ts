@@ -4,6 +4,8 @@ import { authenticateJWT, AuthRequest, requireRole } from "../../middleware/auth
 import { query } from "../../db/pool";
 import { findUserByEmail } from "../users/userRepository";
 import { upsertSchedule } from "../schedules/repository";
+import { approveAgentAndSetTempPassword, setTempPasswordForUser } from "../auth/service";
+import { createNotification } from "../notifications/repository";
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage() });
@@ -13,9 +15,133 @@ router.use(authenticateJWT, requireRole(["admin"]));
 router.get("/users", async (req: AuthRequest, res) => {
   try {
     const { rows } = await query(
-      `SELECT id, first_name, last_name, email, role, status, manager_id, is_approved, created_at FROM users ORDER BY created_at DESC`,
+      `SELECT id, first_name, last_name, email, role, status, manager_id, is_approved, role_id, created_at FROM users ORDER BY created_at DESC`,
     );
     return res.json(rows);
+  } catch (err: any) {
+    return res.status(400).json({ error: { message: err.message || "Failed" } });
+  }
+});
+
+// Pending approvals (all unapproved agents)
+router.get("/pending-approvals", async (req: AuthRequest, res) => {
+  try {
+    const { rows } = await query(
+      `SELECT u.id, u.first_name, u.last_name, u.email, u.manager_id, u.created_at, m.first_name AS manager_first_name, m.last_name AS manager_last_name
+       FROM users u LEFT JOIN users m ON m.id = u.manager_id
+       WHERE u.is_approved = false AND u.role = 'agent' ORDER BY u.created_at DESC`,
+    );
+    return res.json(rows);
+  } catch (err: any) {
+    return res.status(400).json({ error: { message: err.message || "Failed" } });
+  }
+});
+
+router.post("/approve/:userId", async (req: AuthRequest, res) => {
+  const adminId = req.user!.sub;
+  const { userId } = req.params;
+  try {
+    const { tempPassword } = await approveAgentAndSetTempPassword(userId);
+    await createNotification(userId, "Your account has been approved. Use the temporary password provided by admin/manager, then change it in Profile.", "approved");
+    return res.json({ message: "Approved", tempPassword });
+  } catch (err: any) {
+    return res.status(400).json({ error: { message: err.message || "Approve failed" } });
+  }
+});
+
+router.get("/password-reset-requests", async (req: AuthRequest, res) => {
+  try {
+    const { rows } = await query(
+      `SELECT prr.id, prr.user_id, prr.requested_at, u.first_name, u.last_name, u.email
+       FROM password_reset_requests prr JOIN users u ON u.id = prr.user_id
+       WHERE prr.handled_at IS NULL ORDER BY prr.requested_at DESC`,
+    );
+    return res.json(rows);
+  } catch (err: any) {
+    return res.status(400).json({ error: { message: err.message || "Failed" } });
+  }
+});
+
+router.post("/set-temp-password/:userId", async (req: AuthRequest, res) => {
+  const adminId = req.user!.sub;
+  const { userId } = req.params;
+  try {
+    const { tempPassword } = await setTempPasswordForUser(adminId, userId);
+    await createNotification(userId, "A new temporary password has been set. Log in and change it in Profile.", "temp_password");
+    return res.json({ message: "Temp password set", tempPassword });
+  } catch (err: any) {
+    return res.status(400).json({ error: { message: err.message || "Failed" } });
+  }
+});
+
+// Roles and permissions
+router.get("/roles", async (req: AuthRequest, res) => {
+  try {
+    const { rows: roles } = await query(
+      `SELECT id, name, description, created_at FROM roles ORDER BY name`,
+    );
+    const { rows: perms } = await query(`SELECT id, key, label, category FROM permissions ORDER BY category, key`);
+    const { rows: rp } = await query(`SELECT role_id, permission_id FROM role_permissions`);
+    const byRole: Record<string, string[]> = {};
+    rp.forEach((r: any) => {
+      if (!byRole[r.role_id]) byRole[r.role_id] = [];
+      byRole[r.role_id].push(r.permission_id);
+    });
+    return res.json({ roles, permissions: perms, rolePermissions: byRole });
+  } catch (err: any) {
+    return res.status(400).json({ error: { message: err.message || "Failed" } });
+  }
+});
+
+router.post("/roles", async (req: AuthRequest, res) => {
+  const { name, description, permissionIds } = req.body as { name?: string; description?: string; permissionIds?: string[] };
+  if (!name?.trim()) return res.status(400).json({ error: { message: "name required" } });
+  try {
+    const { rows } = await query(
+      `INSERT INTO roles (name, description) VALUES ($1, $2) RETURNING *`,
+      [name.trim(), description?.trim() || null],
+    );
+    const roleId = rows[0].id;
+    if (Array.isArray(permissionIds) && permissionIds.length) {
+      for (const pid of permissionIds) {
+        await query(`INSERT INTO role_permissions (role_id, permission_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`, [roleId, pid]);
+      }
+    }
+    return res.status(201).json(rows[0]);
+  } catch (err: any) {
+    return res.status(400).json({ error: { message: err.message || "Failed" } });
+  }
+});
+
+router.put("/roles/:id", async (req: AuthRequest, res) => {
+  const { id } = req.params;
+  const { name, description, permissionIds } = req.body as { name?: string; description?: string; permissionIds?: string[] };
+  try {
+    if (name?.trim()) await query(`UPDATE roles SET name = $2, description = $3 WHERE id = $1`, [id, name.trim(), description?.trim() ?? null]);
+    await query(`DELETE FROM role_permissions WHERE role_id = $1`, [id]);
+    if (Array.isArray(permissionIds) && permissionIds.length) {
+      for (const pid of permissionIds) {
+        await query(`INSERT INTO role_permissions (role_id, permission_id) VALUES ($1, $2)`, [id, pid]);
+      }
+    }
+    const { rows } = await query(`SELECT * FROM roles WHERE id = $1`, [id]);
+    return res.json(rows[0] || {});
+  } catch (err: any) {
+    return res.status(400).json({ error: { message: err.message || "Failed" } });
+  }
+});
+
+router.patch("/users/:userId/role", async (req: AuthRequest, res) => {
+  const { userId } = req.params;
+  const { roleId } = req.body as { roleId?: string };
+  if (!roleId) return res.status(400).json({ error: { message: "roleId required" } });
+  try {
+    const { rows } = await query(
+      `UPDATE users SET role_id = $2, role = (SELECT name FROM roles WHERE id = $2) WHERE id = $1 RETURNING id, role, role_id`,
+      [userId, roleId],
+    );
+    if (!rows.length) return res.status(404).json({ error: { message: "User not found" } });
+    return res.json(rows[0]);
   } catch (err: any) {
     return res.status(400).json({ error: { message: err.message || "Failed" } });
   }

@@ -9,7 +9,7 @@ const agentNav = [
   { href: "/agent/schedule", label: "Schedule" },
   { href: "/agent/requests", label: "My Requests" },
   { href: "/agent/swap", label: "Swap Shifts" },
-  { href: "/agent/profile", label: "Profile" },
+  { href: "/profile", label: "Profile" },
 ];
 
 const managerNav = [
@@ -19,15 +19,18 @@ const managerNav = [
   { href: "/manager/reports", label: "Reports" },
   { href: "/manager/schedule", label: "Schedule" },
   { href: "/manager/team", label: "Team Members" },
+  { href: "/profile", label: "Profile" },
 ];
 
 const adminNav = [
   { href: "/admin/users", label: "All Users" },
   { href: "/admin/reports", label: "System Reports" },
+  { href: "/admin/roles", label: "Roles & Permissions" },
   { href: "/admin/wallboard", label: "Wallboard" },
   { href: "/admin/schedule", label: "Schedule Management" },
   { href: "/admin/audit", label: "Audit Logs" },
   { href: "/admin/settings", label: "Settings" },
+  { href: "/profile", label: "Profile" },
 ];
 
 export default function Sidebar() {

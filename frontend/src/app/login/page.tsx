@@ -8,12 +8,14 @@ import { useAuthStore } from "../../lib/authStore";
 
 interface LoginResponse {
   token: string;
+  pendingApproval?: boolean;
   user: {
     id: string;
     first_name: string;
     last_name: string;
     email: string;
-    role: "agent" | "manager" | "admin";
+    role: string;
+    force_password_change?: boolean;
   };
 }
 
@@ -35,6 +37,14 @@ export default function LoginPage() {
         body: JSON.stringify({ email, password }),
       });
       setAuth(res.user, res.token);
+      if (res.pendingApproval) {
+        router.push("/pending");
+        return;
+      }
+      if (res.user.force_password_change) {
+        router.push("/profile?change=1");
+        return;
+      }
       if (res.user.role === "agent") {
         router.push("/agent/dashboard");
       } else if (res.user.role === "manager") {

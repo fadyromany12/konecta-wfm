@@ -1,8 +1,15 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import Link from "next/link";
 import { apiRequest } from "../../lib/api";
+
+interface Manager {
+  id: string;
+  first_name: string;
+  last_name: string;
+  email: string;
+}
 
 export default function RegisterPage() {
   const [firstName, setFirstName] = useState("");
@@ -10,15 +17,27 @@ export default function RegisterPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [managerId, setManagerId] = useState<string>("");
+  const [managers, setManagers] = useState<Manager[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
+
+  useEffect(() => {
+    apiRequest<Manager[]>("/auth/managers", {})
+      .then(setManagers)
+      .catch(() => setManagers([]));
+  }, []);
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
     setError(null);
     if (password !== confirmPassword) {
       setError("Passwords do not match");
+      return;
+    }
+    if (!managerId.trim()) {
+      setError("Please select your manager");
       return;
     }
     setLoading(true);
@@ -31,6 +50,7 @@ export default function RegisterPage() {
           email: email.trim().toLowerCase(),
           password,
           confirmPassword,
+          managerId: managerId.trim() || null,
         }),
       });
       setSuccess(true);
@@ -46,9 +66,9 @@ export default function RegisterPage() {
     return (
       <div className="flex min-h-[85vh] items-center justify-center px-4">
         <div className="card w-full max-w-md border-brand/20 text-center shadow-2xl shadow-black/30">
-          <h1 className="text-2xl font-bold tracking-tight text-white">Check your email</h1>
+          <h1 className="text-2xl font-bold tracking-tight text-white">Registration submitted</h1>
           <p className="mb-6 text-slate-400">
-            We sent an activation link to <strong className="text-slate-200">{email}</strong>. Click the link to verify your account, then sign in.
+            Your manager and admin will approve your account. You can log in to see your status. Once approved, your manager will give you a temporary password—then change it in Profile.
           </p>
           <Link href="/login" className="btn-primary inline-block">
             Back to sign in
@@ -98,6 +118,22 @@ export default function RegisterPage() {
               placeholder="you@konecta.com"
               required
             />
+          </div>
+          <div>
+            <label className="mb-1 block text-sm text-slate-300">Your manager</label>
+            <select
+              className="input-field w-full"
+              value={managerId}
+              onChange={(e) => setManagerId(e.target.value)}
+              required
+            >
+              <option value="">Select manager…</option>
+              {managers.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.first_name} {m.last_name} ({m.email})
+                </option>
+              ))}
+            </select>
           </div>
           <div>
             <label className="mb-1 block text-sm text-slate-300">Password</label>
