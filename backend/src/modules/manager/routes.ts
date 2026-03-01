@@ -7,6 +7,7 @@ import { approveAgentAndSetTempPassword, setTempPasswordForUser } from "../auth/
 import { getLeaveById } from "../leave/repository";
 import { getOpenAuxForUser, closeAux, createAux } from "../auxlogs/repository";
 import { deductBalance } from "../leaveBalances/repository";
+import { lockAttendanceRecords, hasLockedAttendanceForUserAndDate, getAttendanceById } from "../attendance/repository";
 import { dateRangeArray, daysAgo } from "../../utils/dateHelpers";
 
 const router = Router();
@@ -310,8 +311,9 @@ router.get("/team-aux-today", authenticateJWT, requireRole(["manager"]), async (
 // List team members (users where manager_id = current user)
 router.get("/team", async (req: AuthRequest, res) => {
   const managerId = req.user!.sub;
-  const limit = Math.min(Number(req.query.limit) || 100, 500);
-  const offset = Number(req.query.offset) || 0;
+  const page = Math.max(1, Number(req.query.page) || 1);
+  const limit = Math.min(Math.max(1, Number(req.query.limit) || 100), 500);
+  const offset = (page - 1) * limit;
   try {
     const { rows } = await query(
       `
@@ -328,7 +330,7 @@ router.get("/team", async (req: AuthRequest, res) => {
       [managerId],
     );
     const total = parseInt(countRows[0]?.count ?? "0", 10);
-    return res.json({ items: rows, total });
+    return res.json({ data: rows, total });
   } catch (err: any) {
     return res.status(400).json({ error: { message: err.message || "Fetch team failed" } });
   }
@@ -605,6 +607,21 @@ router.post("/schedule-activities", async (req: AuthRequest, res) => {
   }
 });
 
+// Manager: approve (lock) timesheet for a team member's date range
+router.post("/attendance/approve-timesheet", async (req: AuthRequest, res) => {
+  const managerId = req.user!.sub;
+  const { user_id, from, to } = req.body as { user_id?: string; from?: string; to?: string };
+  if (!user_id || !from || !to) return res.status(400).json({ error: { message: "user_id, from, and to (YYYY-MM-DD) required" } });
+  const { rows: u } = await query("SELECT id FROM users WHERE id = $1 AND manager_id = $2", [user_id, managerId]);
+  if (!u.length) return res.status(403).json({ error: { message: "Agent not in your team" } });
+  try {
+    const locked = await lockAttendanceRecords(user_id, from, to);
+    return res.json({ message: "Timesheet approved", lockedCount: locked });
+  } catch (err: any) {
+    return res.status(400).json({ error: { message: err.message || "Failed" } });
+  }
+});
+
 // Manager: manual punch and AUX corrections (team members only)
 router.post("/attendance/manual", async (req: AuthRequest, res) => {
   const managerId = req.user!.sub;
@@ -612,6 +629,9 @@ router.post("/attendance/manual", async (req: AuthRequest, res) => {
   if (!user_id || !clock_in) return res.status(400).json({ error: { message: "user_id and clock_in required" } });
   const { rows: u } = await query("SELECT id FROM users WHERE id = $1 AND manager_id = $2", [user_id, managerId]);
   if (!u.length) return res.status(403).json({ error: { message: "Agent not in your team" } });
+  const dateStr = clock_in.slice(0, 10);
+  const locked = await hasLockedAttendanceForUserAndDate(user_id, dateStr);
+  if (locked) return res.status(400).json({ error: { message: "Timesheet for this date is locked; cannot add punch." } });
   try {
     const clockOutDate = clock_out ? new Date(clock_out) : null;
     const clockInDate = new Date(clock_in);
@@ -633,8 +653,9 @@ router.patch("/attendance/:id", async (req: AuthRequest, res) => {
   const { id } = req.params;
   const { clock_in, clock_out } = req.body as { clock_in?: string; clock_out?: string };
   if (!clock_in && !clock_out) return res.status(400).json({ error: { message: "clock_in or clock_out required" } });
-  const { rows: existing } = await query(`SELECT a.user_id, a.clock_in, a.clock_out FROM attendance a JOIN users u ON u.id = a.user_id WHERE a.id = $1 AND u.manager_id = $2`, [id, managerId]);
+  const { rows: existing } = await query(`SELECT a.user_id, a.clock_in, a.clock_out, a.timesheet_approved FROM attendance a JOIN users u ON u.id = a.user_id WHERE a.id = $1 AND u.manager_id = $2`, [id, managerId]);
   if (!existing.length) return res.status(404).json({ error: { message: "Attendance not found or not in your team" } });
+  if (existing[0].timesheet_approved) return res.status(400).json({ error: { message: "Timesheet is locked; cannot edit." } });
   try {
     const cin = clock_in ? new Date(clock_in) : new Date(existing[0].clock_in);
     const cout = clock_out !== undefined ? (clock_out ? new Date(clock_out) : null) : (existing[0].clock_out ? new Date(existing[0].clock_out) : null);

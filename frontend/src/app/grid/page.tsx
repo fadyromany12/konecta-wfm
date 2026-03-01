@@ -65,12 +65,12 @@ export default function ActivityGridPage() {
       return;
     }
     if (user.role === "manager" && token) {
-      apiRequest<{ items?: { id: string; first_name: string; last_name: string }[] }>("/manager/team", {}, token).then((d) => setAgents(Array.isArray(d) ? d : (d.items ?? []))).catch(() => setAgents([]));
+      apiRequest<{ data?: { id: string; first_name: string; last_name: string }[] }>("/manager/team", {}, token).then((d) => setAgents(Array.isArray(d) ? d : (d.data ?? d.items ?? []))).catch(() => setAgents([]));
     }
     if (user.role === "admin" && token) {
-      apiRequest<{ items?: { id: string; first_name: string; last_name: string; role: string }[] }>("/admin/users?limit=500", {}, token)
+      apiRequest<{ data?: { id: string; first_name: string; last_name: string; role: string }[] }>("/admin/users?limit=500", {}, token)
         .then((data) => {
-          const users = Array.isArray(data) ? data : (data.items ?? []);
+          const users = Array.isArray(data) ? data : (data.data ?? data.items ?? []);
           setAgents(users.filter((u) => u.role === "agent").map((u) => ({ id: u.id, first_name: u.first_name, last_name: u.last_name })));
         })
         .catch(() => setAgents([]));

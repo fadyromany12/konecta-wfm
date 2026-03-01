@@ -34,7 +34,7 @@ export default function AdminUsersPage() {
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState("");
   const [updatingRoleId, setUpdatingRoleId] = useState<string | null>(null);
-  const [page, setPage] = useState(0);
+  const [page, setPage] = useState(1);
   const limit = 50;
 
   useEffect(() => {
@@ -54,10 +54,10 @@ export default function AdminUsersPage() {
     setLoading(true);
     try {
       const [data, rolesRes] = await Promise.all([
-        apiRequest<{ items: UserRow[]; total: number }>("/admin/users?limit=" + limit + "&offset=" + page * limit, {}, token),
+        apiRequest<{ data: UserRow[]; total: number }>("/admin/users?page=" + page + "&limit=" + limit, {}, token),
         apiRequest<{ roles: RoleOption[] }>("/admin/roles", {}, token),
       ]);
-      setUsers(Array.isArray(data) ? data : (data.items ?? []));
+      setUsers(Array.isArray(data) ? data : (data.data ?? data.items ?? []));
       setTotal(Array.isArray(data) ? data.length : (data.total ?? 0));
       setRoles(rolesRes.roles || []);
     } catch {
@@ -180,13 +180,13 @@ export default function AdminUsersPage() {
           {!search.trim() && total > limit && (
             <div className="flex items-center justify-between border-t border-slate-700 px-3 py-2">
               <span className="text-sm text-slate-400">
-                Page {page + 1} of {Math.ceil(total / limit)}
+                Page {page} of {Math.ceil(total / limit)}
               </span>
               <div className="flex gap-2">
                 <button
                   type="button"
-                  onClick={() => setPage((p) => Math.max(0, p - 1))}
-                  disabled={page === 0}
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  disabled={page === 1}
                   className="btn-secondary disabled:opacity-50"
                 >
                   Previous
@@ -194,7 +194,7 @@ export default function AdminUsersPage() {
                 <button
                   type="button"
                   onClick={() => setPage((p) => p + 1)}
-                  disabled={(page + 1) * limit >= total}
+                  disabled={page * limit >= total}
                   className="btn-secondary disabled:opacity-50"
                 >
                   Next

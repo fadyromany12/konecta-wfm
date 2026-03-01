@@ -28,6 +28,7 @@ import departmentsRoutes from "./modules/departments/routes";
 import announcementsRoutes from "./modules/announcements/routes";
 import wallboardRoutes from "./modules/wallboard/routes";
 import settingsRoutes from "./modules/settings/routes";
+import { errorHandler } from "./middleware/errorHandler";
 
 const app = express();
 
@@ -85,13 +86,7 @@ app.use("/api/announcements", announcementsRoutes);
 app.use("/api/wallboard", wallboardRoutes);
 app.use("/api/settings", settingsRoutes);
 
-app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
-  if (res.headersSent) return;
-  console.error("Unhandled error:", err);
-  const status = err.statusCode ?? err.status ?? 500;
-  const message = err instanceof Error ? err.message : "Server error";
-  res.status(status).json({ error: { message } });
-});
+app.use(errorHandler);
 
 const PORT = env.port;
 

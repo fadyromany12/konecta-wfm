@@ -3,6 +3,7 @@ import { authenticateJWT, AuthRequest, requireRole } from "../../middleware/auth
 import { query } from "../../db/pool";
 import { upsertSchedule } from "../schedules/repository";
 import { getOpenAuxForUser, closeAux, createAux } from "../auxlogs/repository";
+import { hasLockedAttendanceForUserAndDate, getAttendanceById } from "../attendance/repository";
 
 const router = Router();
 router.use(authenticateJWT, requireRole(["rta", "admin"]));
@@ -199,6 +200,9 @@ router.post("/attendance/manual", async (req: AuthRequest, res) => {
   if (!user_id || !clock_in) return res.status(400).json({ error: { message: "user_id and clock_in required" } });
   const allowed = await canRTAAccessAgent(req.user!.sub, req.user!.role, user_id);
   if (!allowed) return res.status(403).json({ error: { message: "Agent not in your projects" } });
+  const dateStr = clock_in.slice(0, 10);
+  const locked = await hasLockedAttendanceForUserAndDate(user_id, dateStr);
+  if (locked) return res.status(400).json({ error: { message: "Timesheet for this date is locked; cannot add punch." } });
   try {
     const clockOutDate = clock_out ? new Date(clock_out) : null;
     const clockInDate = new Date(clock_in);
@@ -219,13 +223,14 @@ router.patch("/attendance/:id", async (req: AuthRequest, res) => {
   const { id } = req.params;
   const { clock_in, clock_out } = req.body as { clock_in?: string; clock_out?: string };
   if (!clock_in && !clock_out) return res.status(400).json({ error: { message: "clock_in or clock_out required" } });
-  const { rows: existing } = await query(`SELECT a.user_id, a.clock_in, a.clock_out FROM attendance a WHERE a.id = $1`, [id]);
-  if (!existing.length) return res.status(404).json({ error: { message: "Attendance not found" } });
-  const allowed = await canRTAAccessAgent(req.user!.sub, req.user!.role, existing[0].user_id);
+  const att = await getAttendanceById(id);
+  if (!att) return res.status(404).json({ error: { message: "Attendance not found" } });
+  const allowed = await canRTAAccessAgent(req.user!.sub, req.user!.role, att.user_id);
   if (!allowed) return res.status(403).json({ error: { message: "Agent not in your projects" } });
+  if (att.timesheet_approved) return res.status(400).json({ error: { message: "Timesheet is locked; cannot edit." } });
   try {
-    const cin = clock_in ? new Date(clock_in) : new Date(existing[0].clock_in);
-    const cout = clock_out !== undefined ? (clock_out ? new Date(clock_out) : null) : (existing[0].clock_out ? new Date(existing[0].clock_out) : null);
+    const cin = clock_in ? new Date(clock_in) : new Date(att.clock_in);
+    const cout = clock_out !== undefined ? (clock_out ? new Date(clock_out) : null) : (att.clock_out ? new Date(att.clock_out) : null);
     const workedSeconds = cout ? Math.max(0, Math.floor((cout.getTime() - cin.getTime()) / 1000)) : 0;
     const totalHours = `${workedSeconds} seconds`;
     const { rows } = await query(

@@ -9,6 +9,7 @@ import { createNotification } from "../notifications/repository";
 import { getOpenAuxForUser, closeAux, createAux } from "../auxlogs/repository";
 import { dateRangeArray, daysAgo } from "../../utils/dateHelpers";
 import { getBalance, getBalancesForUser, setBalance } from "../leaveBalances/repository";
+import { hasLockedAttendanceForUserAndDate, getAttendanceById } from "../attendance/repository";
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage() });
@@ -17,15 +18,16 @@ router.use(authenticateJWT, requireRole(["admin"]));
 
 router.get("/users", async (req: AuthRequest, res) => {
   try {
-    const limit = Math.min(Number(req.query.limit) || 100, 500);
-    const offset = Number(req.query.offset) || 0;
+    const page = Math.max(1, Number(req.query.page) || 1);
+    const limit = Math.min(Math.max(1, Number(req.query.limit) || 100), 500);
+    const offset = (page - 1) * limit;
     const { rows } = await query(
       `SELECT id, first_name, last_name, email, role, status, manager_id, is_approved, role_id, created_at, offboarded_at, offboarding_reason FROM users ORDER BY created_at DESC LIMIT $1 OFFSET $2`,
       [limit, offset],
     );
     const { rows: countRows } = await query<{ count: string }>(`SELECT count(*) AS count FROM users`);
     const total = parseInt(countRows[0]?.count ?? "0", 10);
-    return res.json({ items: rows, total });
+    return res.json({ data: rows, total });
   } catch (err: any) {
     return res.status(400).json({ error: { message: err.message || "Failed" } });
   }
@@ -215,6 +217,9 @@ router.get("/audit", async (req: AuthRequest, res) => {
 router.post("/attendance/manual", async (req: AuthRequest, res) => {
   const { user_id, clock_in, clock_out } = req.body as { user_id?: string; clock_in?: string; clock_out?: string };
   if (!user_id || !clock_in) return res.status(400).json({ error: { message: "user_id and clock_in required" } });
+  const dateStr = clock_in.slice(0, 10);
+  const locked = await hasLockedAttendanceForUserAndDate(user_id, dateStr);
+  if (locked) return res.status(400).json({ error: { message: "Timesheet for this date is locked; cannot add punch." } });
   try {
     const clockInDate = new Date(clock_in);
     const clockOutDate = clock_out ? new Date(clock_out) : null;
@@ -235,11 +240,12 @@ router.patch("/attendance/:id", async (req: AuthRequest, res) => {
   const { id } = req.params;
   const { clock_in, clock_out } = req.body as { clock_in?: string; clock_out?: string };
   if (!clock_in && !clock_out) return res.status(400).json({ error: { message: "clock_in or clock_out required" } });
+  const att = await getAttendanceById(id);
+  if (!att) return res.status(404).json({ error: { message: "Attendance not found" } });
+  if (att.timesheet_approved) return res.status(400).json({ error: { message: "Timesheet is locked; cannot edit." } });
   try {
-    const { rows: existing } = await query(`SELECT user_id, clock_in, clock_out FROM attendance WHERE id = $1`, [id]);
-    if (!existing.length) return res.status(404).json({ error: { message: "Attendance not found" } });
-    const cin = clock_in ? new Date(clock_in) : new Date(existing[0].clock_in);
-    const cout = clock_out !== undefined ? (clock_out ? new Date(clock_out) : null) : (existing[0].clock_out ? new Date(existing[0].clock_out) : null);
+    const cin = clock_in ? new Date(clock_in) : new Date(att.clock_in);
+    const cout = clock_out !== undefined ? (clock_out ? new Date(clock_out) : null) : (att.clock_out ? new Date(att.clock_out) : null);
     const workedSeconds = cout ? Math.max(0, Math.floor((cout.getTime() - cin.getTime()) / 1000)) : 0;
     const totalHours = `${workedSeconds} seconds`;
     const { rows } = await query(

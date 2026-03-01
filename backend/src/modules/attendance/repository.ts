@@ -9,6 +9,8 @@ export interface Attendance {
   is_late: boolean;
   is_early_logout: boolean;
   overtime_duration: string | null;
+  timesheet_approved?: boolean;
+  shift_date?: string;
 }
 
 export async function getOpenAttendanceForUser(userId: string): Promise<Attendance | null> {
@@ -100,3 +102,26 @@ export async function getAttendanceHistoryForUser(
   return rows;
 }
 
+/** Lock (approve) attendance records for a user in a date range. Sets timesheet_approved = true. */
+export async function lockAttendanceRecords(userId: string, from: string, to: string): Promise<number> {
+  const { rowCount } = await query(
+    `UPDATE attendance SET timesheet_approved = true WHERE user_id = $1 AND shift_date >= $2 AND shift_date <= $3`,
+    [userId, from, to],
+  );
+  return rowCount ?? 0;
+}
+
+/** Returns true if the user has any locked attendance for the given shift_date (prevents clock-in/edit for that date). */
+export async function hasLockedAttendanceForUserAndDate(userId: string, dateStr: string): Promise<boolean> {
+  const { rows } = await query<{ n: number }>(
+    `SELECT 1 AS n FROM attendance WHERE user_id = $1 AND shift_date = $2 AND timesheet_approved = true LIMIT 1`,
+    [userId, dateStr],
+  );
+  return rows.length > 0;
+}
+
+/** Get one attendance record by id (for lock check on PATCH). */
+export async function getAttendanceById(id: string): Promise<Attendance | null> {
+  const { rows } = await query<Attendance>(`SELECT * FROM attendance WHERE id = $1`, [id]);
+  return rows[0] || null;
+}

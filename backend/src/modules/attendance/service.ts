@@ -4,6 +4,7 @@ import {
   createClockIn,
   getAttendanceHistoryForUser,
   getOpenAttendanceForUser,
+  hasLockedAttendanceForUserAndDate,
 } from "./repository";
 import { getScheduleByUserAndDate } from "../schedules/repository";
 import { getAppTimezone } from "../settings/service";
@@ -42,6 +43,11 @@ export async function clockIn(userId: string, workLocation?: "WFH" | "WFO"): Pro
     }
   }
 
+  const locked = await hasLockedAttendanceForUserAndDate(userId, todayStr);
+  if (locked) {
+    throw new Error("Timesheet for this date is locked; cannot clock in. Contact your manager.");
+  }
+
   const schedule = await getScheduleByUserAndDate(userId, todayStr);
   let isLate = false;
   if (schedule?.shift_start) {
@@ -58,6 +64,9 @@ export async function clockOut(userId: string): Promise<Attendance> {
   const open = await getOpenAttendanceForUser(userId);
   if (!open) {
     throw new Error("You are not currently clocked in.");
+  }
+  if ((open as Attendance & { timesheet_approved?: boolean }).timesheet_approved) {
+    throw new Error("This timesheet is locked; cannot clock out. Contact your manager.");
   }
 
   const tz = await getAppTimezone();
