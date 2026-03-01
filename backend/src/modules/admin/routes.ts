@@ -294,6 +294,20 @@ function escapeCsv(s: string): string {
   return s;
 }
 
+/** Format PostgreSQL interval (string or object) for CSV to avoid [object Object]. */
+function formatIntervalForCsv(v: unknown): string {
+  if (v == null) return "";
+  if (typeof v === "string") return v;
+  if (typeof v === "object" && v !== null && "hours" in v) {
+    const o = v as { hours?: number; minutes?: number; seconds?: number };
+    const h = o.hours ?? 0;
+    const m = o.minutes ?? 0;
+    const s = o.seconds ?? 0;
+    return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+  }
+  return String(v);
+}
+
 router.get("/export/attendance", async (req: AuthRequest, res) => {
   try {
     const from = (req.query.from as string) || daysAgo(30);
@@ -309,7 +323,7 @@ router.get("/export/attendance", async (req: AuthRequest, res) => {
     );
     if (format === "csv") {
       const header = "id,first_name,last_name,email,clock_in,clock_out,total_hours,is_late,is_early_logout,overtime_duration,shift_date";
-      const lines = [header, ...rows.map((r: any) => [r.id, r.first_name, r.last_name, r.email, r.clock_in, r.clock_out, r.total_hours, r.is_late, r.is_early_logout, r.overtime_duration, r.shift_date].map(escapeCsv).join(","))];
+      const lines = [header, ...rows.map((r: any) => [r.id, r.first_name, r.last_name, r.email, r.clock_in, r.clock_out, formatIntervalForCsv(r.total_hours), r.is_late, r.is_early_logout, formatIntervalForCsv(r.overtime_duration), r.shift_date].map(String).map(escapeCsv).join(","))];
       res.setHeader("Content-Type", "text/csv");
       res.setHeader("Content-Disposition", `attachment; filename=attendance-${from}-${to}.csv`);
       return res.send(lines.join("\r\n"));
@@ -387,7 +401,7 @@ router.get("/export/overtime", async (req: AuthRequest, res) => {
     );
     if (format === "csv") {
       const header = "id,first_name,last_name,email,clock_in,clock_out,overtime_duration,shift_date";
-      const lines = [header, ...rows.map((r: any) => [r.id, r.first_name, r.last_name, r.email, r.clock_in, r.clock_out, r.overtime_duration, r.shift_date].map(String).map(escapeCsv).join(","))];
+      const lines = [header, ...rows.map((r: any) => [r.id, r.first_name, r.last_name, r.email, r.clock_in, r.clock_out, formatIntervalForCsv(r.overtime_duration), r.shift_date].map(String).map(escapeCsv).join(","))];
       res.setHeader("Content-Type", "text/csv");
       res.setHeader("Content-Disposition", `attachment; filename=overtime-${from}-${to}.csv`);
       return res.send(lines.join("\r\n"));
@@ -401,8 +415,9 @@ router.get("/export/overtime", async (req: AuthRequest, res) => {
 // Daily agents export: one row per user per day with Login, breaks, Logout, Tardy, Overtime, Leave Type, exceed flags, aux codes with time
 router.get("/export/daily", async (req: AuthRequest, res) => {
   try {
-    const from = (req.query.from as string) || new Date().toISOString().slice(0, 10);
-    const to = (req.query.to as string) || new Date().toISOString().slice(0, 10);
+    const today = new Date().toISOString().slice(0, 10);
+    const from = (req.query.from as string)?.trim() || today;
+    const to = (req.query.to as string)?.trim() || today;
     const { rows: agents } = await query(`SELECT id, first_name, last_name FROM users WHERE role = 'agent' AND status = 'active' ORDER BY first_name, last_name`);
     const { rows: attendance } = await query(
       `SELECT a.user_id, a.shift_date, a.clock_in, a.clock_out, a.total_hours, a.is_late, a.is_early_logout, a.overtime_duration
@@ -455,7 +470,8 @@ router.get("/export/daily", async (req: AuthRequest, res) => {
         const tardyMins = att?.is_late && sched?.shift_start ? Math.max(0, Math.round((new Date(att.clock_in).getTime() - new Date(sched.shift_start).getTime()) / 60000)) : 0;
         const overtimeMins = att?.overtime_duration ? Math.round((typeof att.overtime_duration === "string" ? parseInterval(att.overtime_duration) : 0) / 60) : 0;
         const earlyMins = att?.is_early_logout && sched?.shift_end ? Math.max(0, Math.round((new Date(sched.shift_end).getTime() - new Date(att.clock_out).getTime()) / 60000)) : 0;
-        const netHours = att?.total_hours ? (typeof att.total_hours === "string" ? parseInterval(att.total_hours) : 0) / 3600 : 0;
+        const totalHoursSec = att?.total_hours ? (typeof att.total_hours === "string" ? parseInterval(att.total_hours) : (typeof att.total_hours === "object" && att.total_hours && "hours" in att.total_hours ? ((att.total_hours as any).hours || 0) * 3600 + ((att.total_hours as any).minutes || 0) * 60 + ((att.total_hours as any).seconds || 0) : 0)) : 0;
+        const netHours = totalHoursSec / 3600;
         const auxCodesWithTime = auxList.map((a: any) => `${a.aux_type} ${(a.start_time as string).slice(11, 16)}${a.end_time ? "-" + (a.end_time as string).slice(11, 16) : ""}`).join("; ");
         const overnightEligible = sched?.shift_end && new Date(sched.shift_end).getUTCHours() >= 19 ? "Y" : "";
         const transportEligible = att ? "Y" : "";

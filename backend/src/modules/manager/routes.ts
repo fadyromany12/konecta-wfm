@@ -32,29 +32,32 @@ router.get("/transfer-requests", authenticateJWT, requireRole(["manager", "admin
       );
       return res.json(rows);
     }
-    // pending_approval: I am the approver (from_manager's manager) or admin
-    if (isAdmin) {
-      const { rows } = await query(
-        `SELECT r.*, a.first_name AS agent_first_name, a.last_name AS agent_last_name,
+    const baseSql = `SELECT r.*, a.first_name AS agent_first_name, a.last_name AS agent_last_name,
          fm.first_name AS from_manager_first_name, fm.last_name AS from_manager_last_name,
          tm.first_name AS to_manager_first_name, tm.last_name AS to_manager_last_name
          FROM reporting_line_change_requests r
          JOIN users a ON a.id = r.agent_id
          JOIN users fm ON fm.id = r.from_manager_id
-         JOIN users tm ON tm.id = r.to_manager_id
-         WHERE r.status = 'pending' ORDER BY r.created_at DESC`
+         JOIN users tm ON tm.id = r.to_manager_id`;
+    if (filter === "all" || filter === "history") {
+      if (isAdmin) {
+        const { rows } = await query(`${baseSql} ORDER BY r.created_at DESC`);
+        return res.json(rows);
+      }
+      const { rows } = await query(
+        `${baseSql} WHERE fm.manager_id = $1 ORDER BY r.created_at DESC`,
+        [userId]
+      );
+      return res.json(rows);
+    }
+    if (isAdmin) {
+      const { rows } = await query(
+        `${baseSql} WHERE r.status = 'pending' ORDER BY r.created_at DESC`
       );
       return res.json(rows);
     }
     const { rows } = await query(
-      `SELECT r.*, a.first_name AS agent_first_name, a.last_name AS agent_last_name,
-       fm.first_name AS from_manager_first_name, fm.last_name AS from_manager_last_name,
-       tm.first_name AS to_manager_first_name, tm.last_name AS to_manager_last_name
-       FROM reporting_line_change_requests r
-       JOIN users a ON a.id = r.agent_id
-       JOIN users fm ON fm.id = r.from_manager_id
-       JOIN users tm ON tm.id = r.to_manager_id
-       WHERE r.status = 'pending' AND fm.manager_id = $1 ORDER BY r.created_at DESC`,
+      `${baseSql} WHERE r.status = 'pending' AND fm.manager_id = $1 ORDER BY r.created_at DESC`,
       [userId]
     );
     return res.json(rows);
@@ -384,6 +387,16 @@ function escapeCsv(v: any): string {
   return s;
 }
 
+function formatIntervalForCsv(v: unknown): string {
+  if (v == null) return "";
+  if (typeof v === "string") return v;
+  if (typeof v === "object" && v !== null && "hours" in v) {
+    const o = v as { hours?: number; minutes?: number; seconds?: number };
+    return `${o.hours ?? 0}:${String(o.minutes ?? 0).padStart(2, "0")}:${String(o.seconds ?? 0).padStart(2, "0")}`;
+  }
+  return String(v);
+}
+
 // Manager reports: CSV exports for my team only
 router.get("/export/attendance", async (req: AuthRequest, res) => {
   const managerId = req.user!.sub;
@@ -397,7 +410,7 @@ router.get("/export/attendance", async (req: AuthRequest, res) => {
       [managerId, from, to],
     );
     const header = "id,first_name,last_name,email,clock_in,clock_out,total_hours,is_late,is_early_logout,overtime_duration,shift_date";
-    const lines = [header, ...rows.map((r: any) => [r.id, r.first_name, r.last_name, r.email, r.clock_in, r.clock_out, r.total_hours, r.is_late, r.is_early_logout, r.overtime_duration, r.shift_date].map(escapeCsv).join(","))];
+    const lines = [header, ...rows.map((r: any) => [r.id, r.first_name, r.last_name, r.email, r.clock_in, r.clock_out, formatIntervalForCsv(r.total_hours), r.is_late, r.is_early_logout, formatIntervalForCsv(r.overtime_duration), r.shift_date].map(String).map(escapeCsv).join(","))];
     res.setHeader("Content-Type", "text/csv");
     res.setHeader("Content-Disposition", `attachment; filename=team-attendance-${from}-${to}.csv`);
     return res.send(lines.join("\r\n"));

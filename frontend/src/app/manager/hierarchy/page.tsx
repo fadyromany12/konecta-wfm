@@ -74,8 +74,9 @@ export default function ManagerHierarchyPage() {
     setLoading(true);
     setError(null);
     try {
-      const res = await apiRequest<TreeNode[]>("/manager/org-tree", {}, token);
-      setTree(Array.isArray(res) ? res : []);
+      const res = await apiRequest<TreeNode[] | { data?: TreeNode[] }>("/manager/org-tree", {}, token);
+      const list = Array.isArray(res) ? res : (res?.data ?? []);
+      setTree(Array.isArray(list) ? list : []);
     } catch {
       setTree([]);
       setError("Failed to load hierarchy");
@@ -89,8 +90,9 @@ export default function ManagerHierarchyPage() {
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-semibold text-slate-50">Hierarchy</h1>
-      <p className="text-slate-400">
-        {user.role === "admin" ? "Full organization tree." : "Your team and reports."}
+      <p className="page-subtitle">
+        {user.role === "admin" ? "Full organization tree." : "Your direct reports and their reports."}
+        {user.role === "manager" && tree.length > 0 && ` (${tree.length} direct report${tree.length !== 1 ? "s" : ""} at top level)`}
       </p>
       {error && <p className="rounded-lg bg-red-500/15 px-4 py-2 text-sm text-red-400">{error}</p>}
       {loading ? (

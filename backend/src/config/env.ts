@@ -7,7 +7,7 @@ export const env = {
   port: Number(process.env.PORT || 4000),
   databaseUrl: process.env.DATABASE_URL || "",
   jwtSecret: process.env.JWT_SECRET || "change-me",
-  jwtExpiresIn: String(process.env.JWT_EXPIRES_IN || "604800"),
+  jwtExpiresIn: String(process.env.JWT_EXPIRES_IN || "2592000"),
   frontendOrigin: process.env.FRONTEND_ORIGIN || "http://localhost:3000",
   adminApprovalRequired: (process.env.ADMIN_APPROVAL_REQUIRED || "true") === "true",
   // Email (optional – if not set, verification link is logged to console)

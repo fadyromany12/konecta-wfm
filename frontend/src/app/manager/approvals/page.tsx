@@ -35,9 +35,10 @@ export default function ManagerApprovalsPage() {
   const router = useRouter();
   const user = useAuthStore((s) => s.user);
   const token = useAuthStore((s) => s.token);
-  const [tab, setTab] = useState<"leave" | "swaps">("leave");
+  const [tab, setTab] = useState<"leave" | "swaps" | "leaveHistory" | "swapsHistory">("leave");
   const [leave, setLeave] = useState<LeaveItem[]>([]);
   const [swaps, setSwaps] = useState<SwapItem[]>([]);
+  const [leaveHistory, setLeaveHistory] = useState<LeaveItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [rejectLeaveId, setRejectLeaveId] = useState<string | null>(null);
   const [rejectSwapId, setRejectSwapId] = useState<string | null>(null);
@@ -58,15 +59,18 @@ export default function ManagerApprovalsPage() {
     if (!token) return;
     setLoading(true);
     try {
-      const [l, s] = await Promise.all([
+      const [l, s, teamLeave] = await Promise.all([
         apiRequest<LeaveItem[]>("/manager/leave/pending", {}, token),
         apiRequest<SwapItem[]>("/shift-swaps/manager/pending", {}, token),
+        apiRequest<LeaveItem[]>("/manager/leave/team", {}, token),
       ]);
       setLeave(l);
       setSwaps(s);
+      setLeaveHistory((teamLeave || []).filter((r) => r.status !== "pending"));
     } catch {
       setLeave([]);
       setSwaps([]);
+      setLeaveHistory([]);
     } finally {
       setLoading(false);
     }
@@ -118,7 +122,7 @@ export default function ManagerApprovalsPage() {
         <h1 className="page-title">Pending Approvals</h1>
         <p className="page-subtitle">Review and approve leave requests and shift swaps</p>
       </div>
-      <div className="flex gap-2 border-b border-slate-700/80 pb-4">
+      <div className="flex flex-wrap gap-2 border-b border-slate-700/80 pb-4">
         <button
           type="button"
           onClick={() => setTab("leave")}
@@ -128,7 +132,18 @@ export default function ManagerApprovalsPage() {
               : "text-slate-400 hover:bg-slate-800 hover:text-slate-200"
           }`}
         >
-          Leave ({leave.length})
+          Leave pending ({leave.length})
+        </button>
+        <button
+          type="button"
+          onClick={() => setTab("leaveHistory")}
+          className={`rounded-xl px-4 py-2.5 text-sm font-medium transition-all ${
+            tab === "leaveHistory"
+              ? "bg-brand text-white shadow-lg shadow-brand/25"
+              : "text-slate-400 hover:bg-slate-800 hover:text-slate-200"
+          }`}
+        >
+          Leave history
         </button>
         <button
           type="button"
@@ -165,6 +180,37 @@ export default function ManagerApprovalsPage() {
       {loading ? (
         <div className="card">
           <TableSkeleton rows={4} cols={5} />
+        </div>
+      ) : tab === "leaveHistory" ? (
+        <div className="card overflow-auto">
+          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-slate-400">Leave history (approved / rejected)</h2>
+          <table className="w-full border-collapse text-sm">
+            <thead>
+              <tr className="border-b border-slate-700 text-left text-slate-400">
+                <th className="p-2">Agent</th>
+                <th className="p-2">Type</th>
+                <th className="p-2">Dates</th>
+                <th className="p-2">Reason</th>
+                <th className="p-2">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {leaveHistory.map((r) => (
+                <tr key={r.id} className="border-b border-slate-800">
+                  <td className="p-2">{r.first_name} {r.last_name}</td>
+                  <td className="p-2 capitalize">{safeLabel(r.type)}</td>
+                  <td className="p-2">{formatDateOnly(r.start_date)} → {formatDateOnly(r.end_date)}</td>
+                  <td className="p-2 max-w-xs truncate">{r.reason || "-"}</td>
+                  <td className="p-2 capitalize">{r.status}</td>
+                </tr>
+              ))}
+              {leaveHistory.length === 0 && (
+                <tr>
+                  <td colSpan={5} className="py-12 text-center text-slate-500">No leave history yet.</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
         </div>
       ) : tab === "leave" ? (
         <div className="card overflow-auto">

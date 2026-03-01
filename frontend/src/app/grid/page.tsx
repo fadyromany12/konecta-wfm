@@ -252,7 +252,7 @@ export default function ActivityGridPage() {
                                   animate={{ opacity: 1, scale: 1 }}
                                   exit={{ opacity: 0, scale: 0.95 }}
                                   transition={{ duration: 0.15, ease: [0.32, 0.72, 0, 1] }}
-                                  className="absolute left-1/2 -translate-x-1/2 bottom-full mb-1 px-3 py-2 rounded-xl bg-slate-800/95 dark:bg-slate-800/95 border border-brand/40 shadow-brand-glow backdrop-blur-xl text-xs text-left whitespace-nowrap z-20 pointer-events-none ring-1 ring-white/10"
+                                  className="absolute left-1/2 -translate-x-1/2 bottom-full mb-1 px-3 py-2 rounded-xl bg-slate-800/95 dark:bg-slate-800/95 border border-brand/40 shadow-brand-glow backdrop-blur-xl text-xs text-left z-[100] pointer-events-none ring-1 ring-white/10 min-w-[180px] max-w-[320px] whitespace-normal break-words shadow-xl"
                                 >
                                   <p className="font-semibold text-white">{ev.label || ev.type}</p>
                                   <p className="text-slate-300">Since: {formatTimeHHmmss(ev.start)}</p>

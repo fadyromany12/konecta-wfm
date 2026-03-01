@@ -64,11 +64,11 @@ export default function AdminProjectsPage() {
     setLoading(true);
     try {
       const [projRes, usersRes] = await Promise.all([
-        apiRequest<Project[]>("/projects", {}, token),
-        apiRequest<UserRow[]>("/admin/users", {}, token),
+        apiRequest<Project[] | { data?: Project[] }>("/projects", {}, token),
+        apiRequest<UserRow[] | { data?: UserRow[] }>("/admin/users?limit=500", {}, token),
       ]);
-      setProjects(Array.isArray(projRes) ? projRes : []);
-      setUsers(Array.isArray(usersRes) ? usersRes : []);
+      setProjects(Array.isArray(projRes) ? projRes : (projRes?.data ?? []));
+      setUsers(Array.isArray(usersRes) ? usersRes : (usersRes?.data ?? []));
     } catch {
       setProjects([]);
       setUsers([]);

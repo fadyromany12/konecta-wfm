@@ -43,8 +43,9 @@ export default function ManagerTransfersPage() {
   const [managersList, setManagersList] = useState<ManagerOption[]>([]);
   const [myRequests, setMyRequests] = useState<TransferRequest[]>([]);
   const [pendingApproval, setPendingApproval] = useState<TransferRequest[]>([]);
+  const [allTransfers, setAllTransfers] = useState<TransferRequest[]>([]);
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState<"transfer" | "mine" | "approve">("transfer");
+  const [tab, setTab] = useState<"transfer" | "mine" | "approve" | "history">("transfer");
   const [agentId, setAgentId] = useState("");
   const [toManagerId, setToManagerId] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -68,21 +69,24 @@ export default function ManagerTransfersPage() {
     setLoading(true);
     setError(null);
     try {
-      const [teamRes, managersRes, mineRes, pendingRes] = await Promise.all([
+      const [teamRes, managersRes, mineRes, pendingRes, allRes] = await Promise.all([
         user.role === "manager" ? apiRequest<TeamMember[]>("/manager/team", {}, token) : Promise.resolve([]),
         apiRequest<ManagerOption[]>("/manager/managers-list", {}, token),
         apiRequest<TransferRequest[]>("/manager/transfer-requests?filter=mine", {}, token),
         apiRequest<TransferRequest[]>("/manager/transfer-requests?filter=pending_approval", {}, token),
+        apiRequest<TransferRequest[]>("/manager/transfer-requests?filter=all", {}, token),
       ]);
       setTeam(Array.isArray(teamRes) ? teamRes : []);
       setManagersList(Array.isArray(managersRes) ? managersRes : []);
       setMyRequests(Array.isArray(mineRes) ? mineRes : []);
       setPendingApproval(Array.isArray(pendingRes) ? pendingRes : []);
+      setAllTransfers(Array.isArray(allRes) ? allRes : []);
     } catch {
       setTeam([]);
       setManagersList([]);
       setMyRequests([]);
       setPendingApproval([]);
+      setAllTransfers([]);
     } finally {
       setLoading(false);
     }
@@ -160,6 +164,13 @@ export default function ManagerTransfersPage() {
         >
           Pending my approval ({pendingApproval.length})
         </button>
+        <button
+          type="button"
+          onClick={() => setTab("history")}
+          className={`rounded-lg px-4 py-2 text-sm font-medium ${tab === "history" ? "bg-brand/20 text-brand-light" : "text-slate-400 hover:text-slate-200"}`}
+        >
+          History
+        </button>
       </div>
 
       {loading ? (
@@ -208,6 +219,35 @@ export default function ManagerTransfersPage() {
               </button>
             </form>
           )}
+        </div>
+      ) : tab === "history" ? (
+        <div className="card overflow-auto">
+          <h2 className="mb-4 text-lg font-medium text-slate-50">Transfer history (all requests you approved or rejected)</h2>
+          <table className="w-full border-collapse text-sm">
+            <thead>
+              <tr className="border-b border-slate-700 text-left text-slate-400">
+                <th className="p-2">Agent</th>
+                <th className="p-2">From → To manager</th>
+                <th className="p-2">Status</th>
+                <th className="p-2">Date</th>
+              </tr>
+            </thead>
+            <tbody>
+              {allTransfers.map((r) => (
+                <tr key={r.id} className="border-b border-slate-800">
+                  <td className="p-2 text-slate-50">{r.agent_first_name} {r.agent_last_name}</td>
+                  <td className="p-2 text-slate-300">{r.from_manager_first_name} {r.from_manager_last_name} → {r.to_manager_first_name} {r.to_manager_last_name}</td>
+                  <td className="p-2 capitalize text-slate-300">{r.status}</td>
+                  <td className="p-2 text-slate-400">{new Date(r.created_at).toLocaleDateString()}</td>
+                </tr>
+              ))}
+              {allTransfers.length === 0 && (
+                <tr>
+                  <td colSpan={4} className="p-4 text-center text-slate-500">No transfer history.</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
         </div>
       ) : tab === "mine" ? (
         <div className="card overflow-auto">

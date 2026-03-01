@@ -52,10 +52,18 @@ export async function createLeave(input: CreateLeaveInput): Promise<LeaveRequest
   return rows[0];
 }
 
+/** Format date as YYYY-MM-DD without timezone shift (avoid "one day before" for annual leave). */
 function toDateOnly(v: string | Date | null | undefined): string {
   if (v == null) return "";
-  const s = typeof v === "string" ? v : (v as Date).toISOString?.() ?? String(v);
-  return s.slice(0, 10);
+  if (typeof v === "string") {
+    const s = v.trim().slice(0, 10);
+    return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : v;
+  }
+  const d = v as Date;
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(d.getUTCDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
 }
 
 export async function getLeaveByUser(userId: string): Promise<LeaveRequest[]> {

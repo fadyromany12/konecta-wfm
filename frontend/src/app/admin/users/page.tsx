@@ -54,12 +54,14 @@ export default function AdminUsersPage() {
     setLoading(true);
     try {
       const [data, rolesRes] = await Promise.all([
-        apiRequest<{ data: UserRow[]; total: number }>("/admin/users?page=" + page + "&limit=" + limit, {}, token),
+        apiRequest<{ data?: UserRow[]; total?: number; items?: UserRow[] } | UserRow[]>("/admin/users?page=" + page + "&limit=" + limit, {}, token),
         apiRequest<{ roles: RoleOption[] }>("/admin/roles", {}, token),
       ]);
-      setUsers(Array.isArray(data) ? data : (data.data ?? data.items ?? []));
-      setTotal(Array.isArray(data) ? data.length : (data.total ?? 0));
-      setRoles(rolesRes.roles || []);
+      const list = Array.isArray(data) ? data : (data && (data.data ?? data.items ?? []));
+      const totalCount = Array.isArray(data) ? data.length : (data && typeof data.total === "number" ? data.total : 0);
+      setUsers(Array.isArray(list) ? list : []);
+      setTotal(totalCount);
+      setRoles((rolesRes as { roles?: RoleOption[] })?.roles || []);
     } catch {
       setUsers([]);
       setTotal(0);
