@@ -5,32 +5,31 @@ import {
   getAttendanceHistoryForUser,
   getOpenAttendanceForUser,
 } from "./repository";
+import { getScheduleByUserAndDate } from "../schedules/repository";
+import { getAppTimezone } from "../settings/service";
+import { formatDateInTimezone, getTodayInTimezone } from "../../utils/dateHelpers";
 
-interface ScheduleRow {
-  shift_start: string | null;
-  shift_end: string | null;
-}
-
-async function getTodaySchedule(userId: string, now: Date): Promise<ScheduleRow | null> {
-  const dateStr = now.toISOString().slice(0, 10);
-  const { rows } = await query<ScheduleRow>(
-    `SELECT shift_start, shift_end FROM schedules WHERE user_id = $1 AND date = $2`,
-    [userId, dateStr],
-  );
-  return rows[0] || null;
-}
+/** Max hours an open session can span before we treat it as forgotten and auto-close (e.g. night shift should not be auto-closed). */
+const FORGOTTEN_CLOCK_IN_HOURS = 16;
 
 export async function clockIn(userId: string, workLocation?: "WFH" | "WFO"): Promise<Attendance> {
   const now = new Date();
-  const todayStr = now.toISOString().slice(0, 10);
+  const tz = await getAppTimezone();
+  const todayStr = getTodayInTimezone(tz);
 
   const open = await getOpenAttendanceForUser(userId);
   if (open) {
-    const openDateStr = new Date(open.clock_in).toISOString().slice(0, 10);
+    const openDateStr = formatDateInTimezone(open.clock_in, tz);
+    const openClockIn = new Date(open.clock_in);
+    const hoursOpen = (now.getTime() - openClockIn.getTime()) / (3600 * 1000);
+    const isLikelyNightShift =
+      openDateStr < todayStr && hoursOpen < FORGOTTEN_CLOCK_IN_HOURS;
+    if (isLikelyNightShift) {
+      throw new Error("You are already clocked in. If you meant to start a new day, ask your manager to close your previous session.");
+    }
     if (openDateStr < todayStr) {
       const endOfPrevDay = new Date(openDateStr + "T23:59:59.999Z");
-      const clockInTime = new Date(open.clock_in);
-      const workedSeconds = Math.max(0, Math.floor((endOfPrevDay.getTime() - clockInTime.getTime()) / 1000));
+      const workedSeconds = Math.max(0, Math.floor((endOfPrevDay.getTime() - openClockIn.getTime()) / 1000));
       await closeAttendanceSession({
         id: open.id,
         clockOut: endOfPrevDay,
@@ -43,7 +42,7 @@ export async function clockIn(userId: string, workLocation?: "WFH" | "WFO"): Pro
     }
   }
 
-  const schedule = await getTodaySchedule(userId, now);
+  const schedule = await getScheduleByUserAndDate(userId, todayStr);
   let isLate = false;
   if (schedule?.shift_start) {
     const shiftStart = new Date(schedule.shift_start);
@@ -61,7 +60,9 @@ export async function clockOut(userId: string): Promise<Attendance> {
     throw new Error("You are not currently clocked in.");
   }
 
-  const schedule = await getTodaySchedule(userId, now);
+  const tz = await getAppTimezone();
+  const shiftDateStr = formatDateInTimezone(open.clock_in, tz);
+  const schedule = await getScheduleByUserAndDate(userId, shiftDateStr);
   let isEarlyLogout = false;
   let overtimeSeconds = 0;
 

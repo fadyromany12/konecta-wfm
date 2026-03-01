@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { authenticateJWT, AuthRequest, requireRole } from "../../middleware/auth";
+import { runInTransaction } from "../../db/pool";
 import {
   createShiftSwap,
   getShiftSwapsByUser,
@@ -70,52 +71,83 @@ router.get("/manager/team", requireRole(["manager"]), async (req: AuthRequest, r
   }
 });
 
+const LEAVE_DAY_TYPES = ["annual", "sick", "casual", "overtime", "cancel_day_off", "leave"];
+
 router.post("/:id/manager-approve", requireRole(["manager"]), async (req: AuthRequest, res) => {
   const { id } = req.params;
   const { approve } = req.body as { approve?: boolean };
   try {
-    const ok = await setManagerApproval(id, req.user!.sub, approve === true);
-    if (!ok) return res.status(404).json({ error: { message: "Not found or not in your team" } });
     if (approve === true) {
       const swap = await getShiftSwapById(id);
       if (swap) {
         const reqSchedule = await getScheduleByUserAndDate(swap.requester_id, swap.date);
         const tgtSchedule = await getScheduleByUserAndDate(swap.target_id, swap.date);
         if (reqSchedule && tgtSchedule) {
-          await upsertSchedule({
-            userId: swap.requester_id,
-            date: swap.date,
-            projectId: tgtSchedule.project_id,
-            shiftStart: tgtSchedule.shift_start,
-            shiftEnd: tgtSchedule.shift_end,
-            break1Start: tgtSchedule.break_1_start,
-            break1End: tgtSchedule.break_1_end,
-            break2Start: tgtSchedule.break_2_start,
-            break2End: tgtSchedule.break_2_end,
-            break3Start: tgtSchedule.break_3_start,
-            break3End: tgtSchedule.break_3_end,
-            dayType: tgtSchedule.day_type,
-          });
-          await upsertSchedule({
-            userId: swap.target_id,
-            date: swap.date,
-            projectId: reqSchedule.project_id,
-            shiftStart: reqSchedule.shift_start,
-            shiftEnd: reqSchedule.shift_end,
-            break1Start: reqSchedule.break_1_start,
-            break1End: reqSchedule.break_1_end,
-            break2Start: reqSchedule.break_2_start,
-            break2End: reqSchedule.break_2_end,
-            break3Start: reqSchedule.break_3_start,
-            break3End: reqSchedule.break_3_end,
-            dayType: reqSchedule.day_type,
-          });
+          if (LEAVE_DAY_TYPES.includes((reqSchedule.day_type || "").toLowerCase())) {
+            return res.status(400).json({
+              error: { message: "Requester has leave on that day; swap cannot overwrite leave." },
+            });
+          }
+          if (LEAVE_DAY_TYPES.includes((tgtSchedule.day_type || "").toLowerCase())) {
+            return res.status(400).json({
+              error: { message: "Target has leave on that day; swap cannot overwrite leave." },
+            });
+          }
         }
       }
     }
+    await runInTransaction(async (client) => {
+      const ok = await setManagerApproval(id, req.user!.sub, approve === true, client);
+      if (!ok) throw new Error("Not found or not in your team");
+      if (approve === true) {
+        const swap = await getShiftSwapById(id, client);
+        if (swap) {
+          const reqSchedule = await getScheduleByUserAndDate(swap.requester_id, swap.date, client);
+          const tgtSchedule = await getScheduleByUserAndDate(swap.target_id, swap.date, client);
+          if (reqSchedule && tgtSchedule) {
+            await upsertSchedule(
+              {
+                userId: swap.requester_id,
+                date: swap.date,
+                projectId: tgtSchedule.project_id,
+                shiftStart: tgtSchedule.shift_start,
+                shiftEnd: tgtSchedule.shift_end,
+                break1Start: tgtSchedule.break_1_start,
+                break1End: tgtSchedule.break_1_end,
+                break2Start: tgtSchedule.break_2_start,
+                break2End: tgtSchedule.break_2_end,
+                break3Start: tgtSchedule.break_3_start,
+                break3End: tgtSchedule.break_3_end,
+                dayType: tgtSchedule.day_type,
+              },
+              client,
+            );
+            await upsertSchedule(
+              {
+                userId: swap.target_id,
+                date: swap.date,
+                projectId: reqSchedule.project_id,
+                shiftStart: reqSchedule.shift_start,
+                shiftEnd: reqSchedule.shift_end,
+                break1Start: reqSchedule.break_1_start,
+                break1End: reqSchedule.break_1_end,
+                break2Start: reqSchedule.break_2_start,
+                break2End: reqSchedule.break_2_end,
+                break3Start: reqSchedule.break_3_start,
+                break3End: reqSchedule.break_3_end,
+                dayType: reqSchedule.day_type,
+              },
+              client,
+            );
+          }
+        }
+      }
+    });
     return res.json({ message: approve ? "Approved" : "Rejected" });
   } catch (err: any) {
-    return res.status(400).json({ error: { message: err.message || "Failed" } });
+    const message = err instanceof Error ? err.message : "Failed";
+    const status = message.includes("not found") ? 404 : 400;
+    return res.status(status).json({ error: { message } });
   }
 });
 

@@ -1,6 +1,8 @@
 import { Router } from "express";
 import { authenticateJWT, AuthRequest, requireRole } from "../../middleware/auth";
 import { createLeave, getLeaveByUser } from "./repository";
+import { ensureBalance, getBalancesForUser, getAvailableDays } from "../leaveBalances/repository";
+import { dateRangeArray } from "../../utils/dateHelpers";
 import { z } from "zod";
 
 const router = Router();
@@ -25,6 +27,22 @@ router.get("/me", async (req: AuthRequest, res) => {
   }
 });
 
+router.get("/balances/me", async (req: AuthRequest, res) => {
+  const year = Number(req.query.year) || new Date().getFullYear();
+  try {
+    const rows = await getBalancesForUser(req.user!.sub, year);
+    const withAvailable = await Promise.all(
+      rows.map(async (r) => {
+        const available = await getAvailableDays(r.user_id, r.year, r.leave_type);
+        return { ...r, available: available ?? null };
+      }),
+    );
+    return res.json({ year, items: withAvailable });
+  } catch (err: any) {
+    return res.status(400).json({ error: { message: err.message || "Failed" } });
+  }
+});
+
 router.post("/", requireRole(["agent"]), async (req: AuthRequest, res) => {
   const parsed = createSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -36,6 +54,15 @@ router.post("/", requireRole(["agent"]), async (req: AuthRequest, res) => {
   }
   if (type === "overtime" && (!start_time || !end_time)) {
     return res.status(400).json({ error: { message: "Overtime request requires start time and end time" } });
+  }
+  if ((type === "annual" || type === "sick") && start_date && end_date) {
+    const year = new Date(start_date).getFullYear();
+    const days = dateRangeArray(start_date, end_date).length;
+    try {
+      await ensureBalance(req.user!.sub, year, type, days);
+    } catch (e) {
+      return res.status(400).json({ error: { message: e instanceof Error ? e.message : "Insufficient leave balance" } });
+    }
   }
   try {
     const leave = await createLeave({

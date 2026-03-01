@@ -7,6 +7,8 @@ import { upsertSchedule } from "../schedules/repository";
 import { approveAgentAndSetTempPassword, setTempPasswordForUser } from "../auth/service";
 import { createNotification } from "../notifications/repository";
 import { getOpenAuxForUser, closeAux, createAux } from "../auxlogs/repository";
+import { dateRangeArray, daysAgo } from "../../utils/dateHelpers";
+import { getBalance, getBalancesForUser, setBalance } from "../leaveBalances/repository";
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage() });
@@ -15,10 +17,15 @@ router.use(authenticateJWT, requireRole(["admin"]));
 
 router.get("/users", async (req: AuthRequest, res) => {
   try {
+    const limit = Math.min(Number(req.query.limit) || 100, 500);
+    const offset = Number(req.query.offset) || 0;
     const { rows } = await query(
-      `SELECT id, first_name, last_name, email, role, status, manager_id, is_approved, role_id, created_at, offboarded_at, offboarding_reason FROM users ORDER BY created_at DESC`,
+      `SELECT id, first_name, last_name, email, role, status, manager_id, is_approved, role_id, created_at, offboarded_at, offboarding_reason FROM users ORDER BY created_at DESC LIMIT $1 OFFSET $2`,
+      [limit, offset],
     );
-    return res.json(rows);
+    const { rows: countRows } = await query<{ count: string }>(`SELECT count(*) AS count FROM users`);
+    const total = parseInt(countRows[0]?.count ?? "0", 10);
+    return res.json({ items: rows, total });
   } catch (err: any) {
     return res.status(400).json({ error: { message: err.message || "Failed" } });
   }
@@ -36,6 +43,31 @@ router.post("/users/:id/offboard", async (req: AuthRequest, res) => {
     return res.json({ message: "Agent offboarded" });
   } catch (err: any) {
     return res.status(400).json({ error: { message: err.message || "Offboard failed" } });
+  }
+});
+
+router.get("/leave-balances", async (req: AuthRequest, res) => {
+  const user_id = req.query.user_id as string;
+  const year = Number(req.query.year) || new Date().getFullYear();
+  if (!user_id) return res.status(400).json({ error: { message: "user_id required" } });
+  try {
+    const rows = await getBalancesForUser(user_id, year);
+    return res.json({ year, items: rows });
+  } catch (err: any) {
+    return res.status(400).json({ error: { message: err.message || "Failed" } });
+  }
+});
+
+router.post("/leave-balances", async (req: AuthRequest, res) => {
+  const { user_id, year, leave_type, balance, used } = req.body as { user_id?: string; year?: number; leave_type?: string; balance?: number; used?: number };
+  if (!user_id || !year || !leave_type) return res.status(400).json({ error: { message: "user_id, year, leave_type required" } });
+  if (!["annual", "sick"].includes(leave_type)) return res.status(400).json({ error: { message: "leave_type must be annual or sick" } });
+  try {
+    await setBalance(user_id, year, leave_type, Number(balance) || 0, Number(used) || 0);
+    const row = await getBalance(user_id, year, leave_type);
+    return res.json(row);
+  } catch (err: any) {
+    return res.status(400).json({ error: { message: err.message || "Failed" } });
   }
 });
 
@@ -258,7 +290,7 @@ function escapeCsv(s: string): string {
 
 router.get("/export/attendance", async (req: AuthRequest, res) => {
   try {
-    const from = (req.query.from as string) || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const from = (req.query.from as string) || daysAgo(30);
     const to = (req.query.to as string) || new Date().toISOString().slice(0, 10);
     const format = (req.query.format as string) || "csv";
     const { rows } = await query(
@@ -284,7 +316,7 @@ router.get("/export/attendance", async (req: AuthRequest, res) => {
 
 router.get("/export/leave", async (req: AuthRequest, res) => {
   try {
-    const from = (req.query.from as string) || new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const from = (req.query.from as string) || daysAgo(90);
     const to = (req.query.to as string) || new Date().toISOString().slice(0, 10);
     const format = (req.query.format as string) || "csv";
     const { rows } = await query(
@@ -310,7 +342,7 @@ router.get("/export/leave", async (req: AuthRequest, res) => {
 
 router.get("/export/aux", async (req: AuthRequest, res) => {
   try {
-    const from = (req.query.from as string) || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const from = (req.query.from as string) || daysAgo(30);
     const to = (req.query.to as string) || new Date().toISOString().slice(0, 10);
     const format = (req.query.format as string) || "csv";
     const { rows } = await query(
@@ -336,7 +368,7 @@ router.get("/export/aux", async (req: AuthRequest, res) => {
 
 router.get("/export/overtime", async (req: AuthRequest, res) => {
   try {
-    const from = (req.query.from as string) || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const from = (req.query.from as string) || daysAgo(30);
     const to = (req.query.to as string) || new Date().toISOString().slice(0, 10);
     const format = (req.query.format as string) || "csv";
     const { rows } = await query(
@@ -398,18 +430,13 @@ router.get("/export/daily", async (req: AuthRequest, res) => {
     });
     const leaveByUserDate = new Map<string, string>();
     leave.forEach((l: any) => {
-      const start = new Date(l.start_date).getTime();
-      const end = new Date(l.end_date).getTime();
-      for (let t = start; t <= end; t += 86400000) {
-        const d = new Date(t).toISOString().slice(0, 10);
+      for (const d of dateRangeArray(l.start_date, l.end_date)) {
         if (d >= from && d <= to) leaveByUserDate.set(`${l.user_id}:${d}`, l.type || "leave");
       }
     });
-    const fromT = new Date(from).getTime();
-    const toT = new Date(to).getTime();
+    const dateStrs = dateRangeArray(from, to);
     for (const u of agents as { id: string; first_name: string; last_name: string }[]) {
-      for (let t = fromT; t <= toT; t += 86400000) {
-        const dateStr = new Date(t).toISOString().slice(0, 10);
+      for (const dateStr of dateStrs) {
         const att = attByUserDate.get(`${u.id}:${dateStr}`);
         const sched = schedByUserDate.get(`${u.id}:${dateStr}`);
         const auxList = auxByUserDate.get(`${u.id}:${dateStr}`) || [];
@@ -584,7 +611,7 @@ router.put("/schedules", async (req: AuthRequest, res) => {
 // ——— Enterprise: Payroll export (worked hours, overtime, leave, allowances) ———
 router.get("/payroll/export", async (req: AuthRequest, res) => {
   try {
-    const from = (req.query.from as string) || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const from = (req.query.from as string) || daysAgo(30);
     const to = (req.query.to as string) || new Date().toISOString().slice(0, 10);
     const { rows: attendanceRows } = await query(
       `SELECT u.id AS user_id, u.first_name, u.last_name, u.email,
@@ -616,7 +643,7 @@ router.get("/payroll/export", async (req: AuthRequest, res) => {
     });
     const schedMap: Record<string, { days_off: number; holiday: number }> = {};
     schedRows.forEach((r: any) => { schedMap[r.user_id] = { days_off: Number(r.days_off) || 0, holiday: Number(r.holiday_days) || 0 }; });
-    const totalDays = Math.round((new Date(to).getTime() - new Date(from).getTime()) / 86400000) + 1;
+    const totalDays = dateRangeArray(from, to).length;
     const csvHeader = "user_id,first_name,last_name,email,period_start,period_end,days_worked,days_off,days_sick,regular_hours,overtime_hours,overtime_day_hours,overtime_night_hours,leave_days,cancel_day_offs,transportation_allowance_days,overnight_allowance_days";
     const csvLines = attendanceRows.map((r: any) => {
       const uid = r.user_id;

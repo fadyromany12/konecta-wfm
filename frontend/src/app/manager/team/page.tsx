@@ -38,8 +38,8 @@ export default function ManagerTeamPage() {
     if (!token) return;
     setLoading(true);
     try {
-      const data = await apiRequest<TeamMember[]>("/manager/team", {}, token);
-      setMembers(data);
+      const data = await apiRequest<TeamMember[] | { items: TeamMember[] }>("/manager/team", {}, token);
+      setMembers(Array.isArray(data) ? data : (data.items ?? []));
     } catch {
       setMembers([]);
     } finally {

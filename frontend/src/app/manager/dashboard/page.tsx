@@ -71,7 +71,11 @@ export default function ManagerDashboardPage() {
     setLoading(true);
     try {
       const to = new Date().toISOString().slice(0, 10);
-      const from = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
+      const from = (() => {
+        const d = new Date();
+        d.setDate(d.getDate() - 30);
+        return d.toISOString().slice(0, 10);
+      })();
       const [data, leave, swaps, agents, resets, summary, liveAux] = await Promise.all([
         apiRequest<TeamRow[]>(`/manager/attendance/team?date=${date}`, {}, token),
         apiRequest<unknown[]>(`/manager/leave/pending`, {}, token),

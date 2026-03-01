@@ -1,4 +1,5 @@
 import { query } from "../../db/pool";
+import type { PoolClient } from "pg";
 
 export interface ScheduleRow {
   id: string;
@@ -31,10 +32,15 @@ export async function getScheduleByUser(
   return rows;
 }
 
-export async function getScheduleByUserAndDate(userId: string, date: string): Promise<ScheduleRow | null> {
+export async function getScheduleByUserAndDate(
+  userId: string,
+  date: string,
+  client?: PoolClient,
+): Promise<ScheduleRow | null> {
   const { rows } = await query<ScheduleRow>(
     `SELECT * FROM schedules WHERE user_id = $1 AND date = $2`,
     [userId, date],
+    client,
   );
   return rows[0] || null;
 }
@@ -56,20 +62,23 @@ export async function getTeamSchedulesByManager(
   return rows;
 }
 
-export async function upsertSchedule(params: {
-  userId: string;
-  date: string;
-  projectId?: string | null;
-  shiftStart: string | null;
-  shiftEnd: string | null;
-  break1Start?: string | null;
-  break1End?: string | null;
-  break2Start?: string | null;
-  break2End?: string | null;
-  break3Start?: string | null;
-  break3End?: string | null;
-  dayType: string;
-}): Promise<ScheduleRow> {
+export async function upsertSchedule(
+  params: {
+    userId: string;
+    date: string;
+    projectId?: string | null;
+    shiftStart: string | null;
+    shiftEnd: string | null;
+    break1Start?: string | null;
+    break1End?: string | null;
+    break2Start?: string | null;
+    break2End?: string | null;
+    break3Start?: string | null;
+    break3End?: string | null;
+    dayType: string;
+  },
+  client?: PoolClient,
+): Promise<ScheduleRow> {
   const { rows } = await query<ScheduleRow>(
     `
     INSERT INTO schedules (user_id, date, project_id, shift_start, shift_end, break_1_start, break_1_end, break_2_start, break_2_end, break_3_start, break_3_end, day_type, updated_at)
@@ -102,6 +111,7 @@ export async function upsertSchedule(params: {
       params.break3End ?? null,
       params.dayType,
     ],
+    client,
   );
   return rows[0];
 }

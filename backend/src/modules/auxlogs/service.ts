@@ -2,12 +2,14 @@ import {
   AuxLog,
   AuxType,
   closeAux,
+  countAuxTypeSince,
   countAuxTypeToday,
   createAux,
   getAuxHistoryForUser,
   getOpenAuxForUser,
   isOncePerDayType,
 } from "./repository";
+import { getOpenAttendanceForUser } from "../attendance/repository";
 
 const BREAK_LIMIT_MINUTES = Number(process.env.BREAK_LIMIT_MINUTES || 15);
 const LUNCH_LIMIT_MINUTES = Number(process.env.LUNCH_LIMIT_MINUTES || 60);
@@ -27,9 +29,12 @@ function getLimitMinutesForType(auxType: AuxType): number | null {
 export async function startAux(userId: string, auxType: AuxType): Promise<AuxLog> {
   const now = new Date();
   if (isOncePerDayType(auxType)) {
-    const count = await countAuxTypeToday(userId, auxType);
+    const openAttendance = await getOpenAttendanceForUser(userId);
+    const count = openAttendance
+      ? await countAuxTypeSince(userId, auxType, openAttendance.clock_in)
+      : await countAuxTypeToday(userId, auxType);
     if (count >= 1) {
-      throw new Error(`You can only take one ${auxType.replace("_", " ")} per day.`);
+      throw new Error(`You can only take one ${auxType.replace("_", " ")} per shift.`);
     }
   }
   const open = await getOpenAuxForUser(userId);

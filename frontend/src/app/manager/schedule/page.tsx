@@ -73,7 +73,8 @@ export default function ManagerSchedulePage() {
   async function loadTeam() {
     if (!token) return;
     try {
-      const team = await apiRequest<TeamMember[]>("/manager/team", {}, token);
+      const data = await apiRequest<TeamMember[] | { items: TeamMember[] }>("/manager/team", {}, token);
+      const team = Array.isArray(data) ? data : (data.items ?? []);
       const map: Record<string, TeamMember> = {};
       team.forEach((t) => (map[t.id] = t));
       setTeamMap(map);

@@ -1,4 +1,5 @@
 import { query } from "../../db/pool";
+import type { PoolClient } from "pg";
 
 export type LeaveType = "annual" | "sick" | "casual" | "overtime" | "cancel_day_off";
 export type LeaveStatus = "pending" | "approved" | "rejected" | "cancelled";
@@ -65,8 +66,8 @@ export async function getLeaveByUser(userId: string): Promise<LeaveRequest[]> {
   return rows.map((r) => ({ ...r, start_date: toDateOnly(r.start_date), end_date: toDateOnly(r.end_date) }));
 }
 
-export async function getLeaveById(id: string): Promise<LeaveRequest | null> {
-  const { rows } = await query<LeaveRequest>(`SELECT * FROM leave_requests WHERE id = $1`, [id]);
+export async function getLeaveById(id: string, client?: PoolClient): Promise<LeaveRequest | null> {
+  const { rows } = await query<LeaveRequest>(`SELECT * FROM leave_requests WHERE id = $1`, [id], client);
   const r = rows[0];
   if (!r) return null;
   return { ...r, start_date: toDateOnly(r.start_date), end_date: toDateOnly(r.end_date) };

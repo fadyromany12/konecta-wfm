@@ -29,10 +29,13 @@ export default function AdminUsersPage() {
   const user = useAuthStore((s) => s.user);
   const token = useAuthStore((s) => s.token);
   const [users, setUsers] = useState<UserRow[]>([]);
+  const [total, setTotal] = useState(0);
   const [roles, setRoles] = useState<RoleOption[]>([]);
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState("");
   const [updatingRoleId, setUpdatingRoleId] = useState<string | null>(null);
+  const [page, setPage] = useState(0);
+  const limit = 50;
 
   useEffect(() => {
     if (!user || !token) {
@@ -44,20 +47,22 @@ export default function AdminUsersPage() {
       return;
     }
     load();
-  }, [user, token]);
+  }, [user, token, page]);
 
   async function load() {
     if (!token) return;
     setLoading(true);
     try {
       const [data, rolesRes] = await Promise.all([
-        apiRequest<UserRow[]>("/admin/users", {}, token),
+        apiRequest<{ items: UserRow[]; total: number }>("/admin/users?limit=" + limit + "&offset=" + page * limit, {}, token),
         apiRequest<{ roles: RoleOption[] }>("/admin/roles", {}, token),
       ]);
-      setUsers(data);
+      setUsers(Array.isArray(data) ? data : (data.items ?? []));
+      setTotal(Array.isArray(data) ? data.length : (data.total ?? 0));
       setRoles(rolesRes.roles || []);
     } catch {
       setUsers([]);
+      setTotal(0);
     } finally {
       setLoading(false);
     }
@@ -93,7 +98,7 @@ export default function AdminUsersPage() {
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="page-title">All Users</h1>
-          <p className="page-subtitle">{users.length} user{users.length !== 1 ? "s" : ""} total</p>
+          <p className="page-subtitle">{search.trim() ? filtered.length + " of " + total : total} user{total !== 1 ? "s" : ""} total</p>
         </div>
         <input
           type="search"
@@ -172,6 +177,31 @@ export default function AdminUsersPage() {
               )}
             </tbody>
           </table>
+          {!search.trim() && total > limit && (
+            <div className="flex items-center justify-between border-t border-slate-700 px-3 py-2">
+              <span className="text-sm text-slate-400">
+                Page {page + 1} of {Math.ceil(total / limit)}
+              </span>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setPage((p) => Math.max(0, p - 1))}
+                  disabled={page === 0}
+                  className="btn-secondary disabled:opacity-50"
+                >
+                  Previous
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPage((p) => p + 1)}
+                  disabled={(page + 1) * limit >= total}
+                  className="btn-secondary disabled:opacity-50"
+                >
+                  Next
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>

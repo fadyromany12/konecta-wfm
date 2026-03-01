@@ -8,26 +8,19 @@ import { toast } from "../../../lib/toast";
 
 const today = new Date();
 const yyyy = (d: Date) => d.toISOString().slice(0, 10);
+function addDays(d: Date, n: number) {
+  const x = new Date(d);
+  x.setDate(x.getDate() + n);
+  return x;
+}
 const presets = [
   { label: "Today", from: yyyy(today), to: yyyy(today) },
-  {
-    label: "This week",
-    from: yyyy(new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000)),
-    to: yyyy(today),
-  },
-  {
-    label: "This month",
-    from: yyyy(new Date(today.getFullYear(), today.getMonth(), 1)),
-    to: yyyy(today),
-  },
-  {
-    label: "Last 30 days",
-    from: yyyy(new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000)),
-    to: yyyy(today),
-  },
+  { label: "This week", from: yyyy(addDays(today, -7)), to: yyyy(today) },
+  { label: "This month", from: yyyy(new Date(today.getFullYear(), today.getMonth(), 1)), to: yyyy(today) },
+  { label: "Last 30 days", from: yyyy(addDays(today, -30)), to: yyyy(today) },
 ];
 
-const defaultFrom = yyyy(new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000));
+const defaultFrom = yyyy(addDays(today, -30));
 const defaultTo = yyyy(today);
 
 export default function AdminReportsPage() {

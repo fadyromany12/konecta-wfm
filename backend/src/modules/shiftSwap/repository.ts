@@ -1,4 +1,5 @@
 import { query } from "../../db/pool";
+import type { PoolClient } from "pg";
 
 export interface ShiftSwapRow {
   id: string;
@@ -42,8 +43,8 @@ export async function getShiftSwapsByUser(userId: string): Promise<ShiftSwapRow[
   return rows;
 }
 
-export async function getShiftSwapById(id: string): Promise<ShiftSwapRow | null> {
-  const { rows } = await query<ShiftSwapRow>(`SELECT * FROM shift_swaps WHERE id = $1`, [id]);
+export async function getShiftSwapById(id: string, client?: PoolClient): Promise<ShiftSwapRow | null> {
+  const { rows } = await query<ShiftSwapRow>(`SELECT * FROM shift_swaps WHERE id = $1`, [id], client);
   return rows[0] || null;
 }
 
@@ -64,6 +65,7 @@ export async function setManagerApproval(
   id: string,
   managerId: string,
   approved: boolean,
+  client?: PoolClient,
 ): Promise<boolean> {
   const approval = approved ? "approved" : "rejected";
   const newStatus = approved ? "finalized" : "cancelled";
@@ -76,6 +78,7 @@ export async function setManagerApproval(
       AND ss.requester_status = 'accepted' AND ss.manager_approval = 'pending'
     `,
     [id, approval, newStatus, managerId],
+    client,
   );
   return (rowCount ?? 0) > 0;
 }

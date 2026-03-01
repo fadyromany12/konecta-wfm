@@ -27,11 +27,20 @@ export function isOncePerDayType(auxType: AuxType): boolean {
   return ONCE_PER_DAY_TYPES.includes(auxType);
 }
 
-/** Count how many times user has used this aux type today (by start_time date). */
+/** Count how many times user has used this aux type today (by calendar date). Used when no open attendance (e.g. no active shift). */
 export async function countAuxTypeToday(userId: string, auxType: string): Promise<number> {
   const { rows } = await query<{ count: string }>(
     `SELECT count(*) AS count FROM auxlogs WHERE user_id = $1 AND aux_type = $2 AND start_time::date = current_date`,
     [userId, auxType],
+  );
+  return parseInt(rows[0]?.count ?? "0", 10);
+}
+
+/** Count how many times user has used this aux type since a given time (e.g. start of current shift). Use for night shifts so "once per day" is per shift, not per calendar day. */
+export async function countAuxTypeSince(userId: string, auxType: string, sinceIso: string): Promise<number> {
+  const { rows } = await query<{ count: string }>(
+    `SELECT count(*) AS count FROM auxlogs WHERE user_id = $1 AND aux_type = $2 AND start_time >= $3`,
+    [userId, auxType, sinceIso],
   );
   return parseInt(rows[0]?.count ?? "0", 10);
 }
@@ -49,15 +58,20 @@ export async function createAux(
   auxType: AuxType,
   start: Date,
 ): Promise<AuxLog> {
-  const { rows } = await query<AuxLog>(
-    `
+  try {
+    const { rows } = await query<AuxLog>(
+      `
       INSERT INTO auxlogs (user_id, aux_type, start_time)
       VALUES ($1, $2, $3)
       RETURNING *
     `,
-    [userId, auxType, start.toISOString()],
-  );
-  return rows[0];
+      [userId, auxType, start.toISOString()],
+    );
+    return rows[0];
+  } catch (e: any) {
+    if (e?.code === "23505") throw new Error("You already have an active AUX. End it first.");
+    throw e;
+  }
 }
 
 export async function closeAux(params: {

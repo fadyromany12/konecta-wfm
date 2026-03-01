@@ -1,11 +1,13 @@
 import { Router } from "express";
 import { authenticateJWT, AuthRequest, requireRole } from "../../middleware/auth";
-import { query } from "../../db/pool";
+import { query, runInTransaction } from "../../db/pool";
 import { getTeamSchedulesByManager, upsertSchedule } from "../schedules/repository";
 import { createNotification } from "../notifications/repository";
 import { approveAgentAndSetTempPassword, setTempPasswordForUser } from "../auth/service";
 import { getLeaveById } from "../leave/repository";
 import { getOpenAuxForUser, closeAux, createAux } from "../auxlogs/repository";
+import { deductBalance } from "../leaveBalances/repository";
+import { dateRangeArray, daysAgo } from "../../utils/dateHelpers";
 
 const router = Router();
 
@@ -259,7 +261,7 @@ router.post("/transfer-request", async (req: AuthRequest, res) => {
 // Team summary: aux counts and leave counts for my team (for dashboard)
 router.get("/team-summary", async (req: AuthRequest, res) => {
   const managerId = req.user!.sub;
-  const from = (req.query.from as string) || new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
+  const from = (req.query.from as string) || daysAgo(30);
   const to = (req.query.to as string) || new Date().toISOString().slice(0, 10);
   try {
     const { rows: auxRows } = await query(
@@ -308,6 +310,8 @@ router.get("/team-aux-today", authenticateJWT, requireRole(["manager"]), async (
 // List team members (users where manager_id = current user)
 router.get("/team", async (req: AuthRequest, res) => {
   const managerId = req.user!.sub;
+  const limit = Math.min(Number(req.query.limit) || 100, 500);
+  const offset = Number(req.query.offset) || 0;
   try {
     const { rows } = await query(
       `
@@ -315,10 +319,16 @@ router.get("/team", async (req: AuthRequest, res) => {
         FROM users
         WHERE manager_id = $1
         ORDER BY first_name, last_name
+        LIMIT $2 OFFSET $3
       `,
+      [managerId, limit, offset],
+    );
+    const { rows: countRows } = await query<{ count: string }>(
+      `SELECT count(*) AS count FROM users WHERE manager_id = $1`,
       [managerId],
     );
-    return res.json(rows);
+    const total = parseInt(countRows[0]?.count ?? "0", 10);
+    return res.json({ items: rows, total });
   } catch (err: any) {
     return res.status(400).json({ error: { message: err.message || "Fetch team failed" } });
   }
@@ -375,7 +385,7 @@ function escapeCsv(v: any): string {
 // Manager reports: CSV exports for my team only
 router.get("/export/attendance", async (req: AuthRequest, res) => {
   const managerId = req.user!.sub;
-  const from = (req.query.from as string) || new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
+  const from = (req.query.from as string) || daysAgo(30);
   const to = (req.query.to as string) || new Date().toISOString().slice(0, 10);
   try {
     const { rows } = await query(
@@ -396,7 +406,7 @@ router.get("/export/attendance", async (req: AuthRequest, res) => {
 
 router.get("/export/leave", async (req: AuthRequest, res) => {
   const managerId = req.user!.sub;
-  const from = (req.query.from as string) || new Date(Date.now() - 90 * 86400000).toISOString().slice(0, 10);
+  const from = (req.query.from as string) || daysAgo(90);
   const to = (req.query.to as string) || new Date().toISOString().slice(0, 10);
   try {
     const { rows } = await query(
@@ -417,7 +427,7 @@ router.get("/export/leave", async (req: AuthRequest, res) => {
 
 router.get("/export/aux", async (req: AuthRequest, res) => {
   const managerId = req.user!.sub;
-  const from = (req.query.from as string) || new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
+  const from = (req.query.from as string) || daysAgo(30);
   const to = (req.query.to as string) || new Date().toISOString().slice(0, 10);
   try {
     const { rows } = await query(
@@ -481,37 +491,50 @@ router.post("/leave/:id/approve", async (req: AuthRequest, res) => {
   const managerId = req.user!.sub;
   const { id } = req.params;
   try {
-    const { rows: leaveRows } = await query<{ user_id: string }>(
-      `SELECT lr.user_id FROM leave_requests lr JOIN users u ON lr.user_id = u.id WHERE lr.id = $1 AND u.manager_id = $2 AND lr.status = 'pending'`,
-      [id, managerId],
-    );
-    if (!leaveRows.length) {
-      return res.status(404).json({ error: { message: "Leave request not found or not in your team" } });
-    }
-    const userId = leaveRows[0].user_id;
-    await query(
-      `UPDATE leave_requests SET status = 'approved', approved_by = $2 WHERE id = $1`,
-      [id, managerId],
-    );
-    const leave = await getLeaveById(id);
-    if (leave) {
-      const start = new Date(leave.start_date + "T12:00:00").getTime();
-      const end = new Date(leave.end_date + "T12:00:00").getTime();
-      for (let t = start; t <= end; t += 86400000) {
-        const dateStr = new Date(t).toISOString().slice(0, 10);
-        await upsertSchedule({
-          userId,
-          date: dateStr,
-          shiftStart: null,
-          shiftEnd: null,
-          dayType: leave.type,
-        });
+    let userId: string;
+    await runInTransaction(async (client) => {
+      const { rows: leaveRows } = await query<{ user_id: string }>(
+        `SELECT lr.user_id FROM leave_requests lr JOIN users u ON lr.user_id = u.id WHERE lr.id = $1 AND u.manager_id = $2 AND lr.status = 'pending'`,
+        [id, managerId],
+        client,
+      );
+      if (!leaveRows.length) {
+        throw new Error("Leave request not found or not in your team");
       }
+      userId = leaveRows[0].user_id;
+      await query(
+        `UPDATE leave_requests SET status = 'approved', approved_by = $2 WHERE id = $1`,
+        [id, managerId],
+        client,
+      );
+      const leave = await getLeaveById(id, client);
+      if (leave) {
+        for (const dateStr of dateRangeArray(leave.start_date, leave.end_date)) {
+          await upsertSchedule(
+            {
+              userId,
+              date: dateStr,
+              shiftStart: null,
+              shiftEnd: null,
+              dayType: leave.type,
+            },
+            client,
+          );
+        }
+      }
+    });
+    const leave = await getLeaveById(id);
+    if (leave && (leave.type === "annual" || leave.type === "sick")) {
+      const year = new Date(leave.start_date).getFullYear();
+      const days = dateRangeArray(leave.start_date, leave.end_date).length;
+      await deductBalance(leave.user_id, year, leave.type, days);
     }
-    await createNotification(userId, "Your leave request has been approved.", "leave_approved");
+    await createNotification(userId!, "Your leave request has been approved.", "leave_approved");
     return res.json({ message: "Leave approved" });
   } catch (err: any) {
-    return res.status(400).json({ error: { message: err.message || "Approve leave failed" } });
+    const message = err instanceof Error ? err.message : "Approve leave failed";
+    const status = message.includes("not found") ? 404 : 400;
+    return res.status(status).json({ error: { message } });
   }
 });
 

@@ -30,7 +30,8 @@ export default function AdminSettingsPage() {
   const router = useRouter();
   const user = useAuthStore((s) => s.user);
   const token = useAuthStore((s) => s.token);
-  const [tab, setTab] = useState<"holidays" | "departments" | "announcements">("holidays");
+  const [tab, setTab] = useState<"general" | "holidays" | "departments" | "announcements">("general");
+  const [settings, setSettings] = useState<Record<string, string>>({});
   const [holidays, setHolidays] = useState<Holiday[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
@@ -46,11 +47,13 @@ export default function AdminSettingsPage() {
     const load = async () => {
       setLoading(true);
       try {
-        const [h, d, a] = await Promise.all([
+        const [s, h, d, a] = await Promise.all([
+          apiRequest<Record<string, string>>("/settings", {}, token),
           apiRequest<Holiday[]>("/holidays", {}, token),
           apiRequest<Department[]>("/departments", {}, token),
           apiRequest<Announcement[]>("/announcements/all", {}, token),
         ]);
+        setSettings(s || {});
         setHolidays(h);
         setDepartments(d);
         setAnnouncements(a);
@@ -69,7 +72,7 @@ export default function AdminSettingsPage() {
     <div className="space-y-6">
       <h1 className="text-2xl font-semibold text-slate-50">Settings</h1>
       <div className="flex gap-2 border-b border-slate-700 pb-2">
-        {(["holidays", "departments", "announcements"] as const).map((t) => (
+        {(["general", "holidays", "departments", "announcements"] as const).map((t) => (
           <button
             key={t}
             type="button"
@@ -83,6 +86,13 @@ export default function AdminSettingsPage() {
         ))}
       </div>
 
+      {tab === "general" && (
+        <GeneralSection
+          settings={settings}
+          token={token!}
+          onUpdate={() => apiRequest<Record<string, string>>("/settings", {}, token!).then(setSettings)}
+        />
+      )}
       {tab === "holidays" && (
         <HolidaysSection
           list={holidays}
@@ -105,6 +115,76 @@ export default function AdminSettingsPage() {
         />
       )}
       {loading && <p className="text-slate-400">Loading…</p>}
+    </div>
+  );
+}
+
+const COMMON_TIMEZONES = [
+  "UTC",
+  "Africa/Cairo",
+  "Africa/Johannesburg",
+  "Europe/London",
+  "Europe/Paris",
+  "Europe/Berlin",
+  "Asia/Dubai",
+  "Asia/Riyadh",
+  "Asia/Kolkata",
+  "America/New_York",
+  "America/Los_Angeles",
+];
+
+function GeneralSection({
+  settings,
+  token,
+  onUpdate,
+}: {
+  settings: Record<string, string>;
+  token: string;
+  onUpdate: () => void;
+}) {
+  const [timezone, setTimezone] = useState(settings.timezone || "UTC");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setTimezone(settings.timezone || "UTC");
+  }, [settings.timezone]);
+
+  async function save() {
+    setSaving(true);
+    try {
+      await apiRequest("/settings", {
+        method: "PATCH",
+        body: JSON.stringify({ timezone }),
+      }, token);
+      onUpdate();
+    } catch {
+      // ignore
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="card space-y-4">
+      <h2 className="text-lg font-medium text-slate-200">General</h2>
+      <p className="text-sm text-slate-400">
+        App timezone is used globally for &quot;today&quot; (clock-in, schedules, reports). Set to your operating region (e.g. Egypt: Africa/Cairo).
+      </p>
+      <div className="flex flex-wrap items-center gap-3">
+        <label className="text-sm text-slate-300">Timezone</label>
+        <select
+          value={timezone}
+          onChange={(e) => setTimezone(e.target.value)}
+          className="input-field min-w-[220px]"
+        >
+          {COMMON_TIMEZONES.map((tz) => (
+            <option key={tz} value={tz}>{tz}</option>
+          ))}
+        </select>
+        <button type="button" onClick={save} disabled={saving} className="btn-primary">
+          {saving ? "Saving…" : "Save"}
+        </button>
+      </div>
     </div>
   );
 }

@@ -219,10 +219,11 @@ export default function AdminSchedulePage() {
 
   const dates = useMemo(() => {
     const arr: string[] = [];
-    const fromT = new Date(from).getTime();
-    const toT = new Date(to).getTime();
-    for (let t = fromT; t <= toT; t += 86400000) {
-      arr.push(new Date(t).toISOString().slice(0, 10));
+    const d = new Date(from + "T12:00:00");
+    const end = new Date(to + "T12:00:00");
+    while (d <= end) {
+      arr.push(d.toISOString().slice(0, 10));
+      d.setDate(d.getDate() + 1);
     }
     return arr;
   }, [from, to]);
