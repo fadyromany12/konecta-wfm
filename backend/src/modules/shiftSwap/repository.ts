@@ -92,3 +92,16 @@ export async function getPendingShiftSwapsForManager(managerId: string): Promise
   );
   return rows;
 }
+
+export async function getShiftSwapsForManager(managerId: string): Promise<ShiftSwapRow[]> {
+  const { rows } = await query<ShiftSwapRow>(
+    `
+    SELECT DISTINCT ON (ss.id) ss.* FROM shift_swaps ss
+    JOIN users u ON (ss.requester_id = u.id OR ss.target_id = u.id)
+    WHERE u.manager_id = $1
+    ORDER BY ss.id, ss.created_at DESC
+    `,
+    [managerId],
+  );
+  return rows.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+}

@@ -1,8 +1,6 @@
 import { Router } from "express";
 import { authenticateJWT, AuthRequest, requireRole } from "../../middleware/auth";
 import { query } from "../../db/pool";
-import { createAux, closeAux } from "../auxlogs/repository";
-
 const router = Router();
 
 // List projects (for agent: all active projects; for PM: my projects)
@@ -31,8 +29,7 @@ router.get("/me", authenticateJWT, requireRole(["agent", "manager", "admin", "pr
   }
 });
 
-// Agent: clock in to project (one at a time: end any other session today first).
-// Same project same day re-login: treat gap as "unavailable" then back to "available" (aux log only; does not affect early-leave).
+// Agent: clock in to project. Only one active session per project at a time (cannot clock in again to same project until clocked out).
 router.post("/clock-in", authenticateJWT, requireRole(["agent", "manager", "admin", "project_manager"]), async (req: AuthRequest, res) => {
   const userId = req.user!.sub;
   const { projectId } = req.body as { projectId?: string };
@@ -40,27 +37,17 @@ router.post("/clock-in", authenticateJWT, requireRole(["agent", "manager", "admi
   const today = new Date().toISOString().slice(0, 10);
   const now = new Date();
   try {
+    const { rows: activeSameProject } = await query(
+      `SELECT id FROM project_sessions WHERE user_id = $1 AND project_id = $2 AND session_date = $3 AND clock_out_at IS NULL`,
+      [userId, projectId, today]
+    );
+    if (activeSameProject.length > 0) {
+      return res.status(400).json({ error: { message: "Already clocked in to this project. Clock out first to start a new session." } });
+    }
     await query(
       `UPDATE project_sessions SET clock_out_at = now() WHERE user_id = $1 AND session_date = $2 AND clock_out_at IS NULL`,
       [userId, today]
     );
-    // Same project same day: if they had a previous session on this project today that ended, log "unavailable" for that gap (then they are back "available" now).
-    const { rows: prevSame } = await query<{ clock_out_at: string }>(
-      `SELECT clock_out_at FROM project_sessions WHERE user_id = $1 AND project_id = $2 AND session_date = $3 AND clock_out_at IS NOT NULL ORDER BY clock_out_at DESC LIMIT 1`,
-      [userId, projectId, today]
-    );
-    if (prevSame.length > 0) {
-      const outAt = new Date(prevSame[0].clock_out_at);
-      const gapSeconds = Math.max(0, Math.floor((now.getTime() - outAt.getTime()) / 1000));
-      if (gapSeconds > 0) {
-        try {
-          const aux = await createAux(userId, "unavailable" as any, outAt);
-          await closeAux({ id: aux.id, end: now, durationSeconds: gapSeconds, overLimit: false });
-        } catch (_) {
-          // non-fatal: continue with project session
-        }
-      }
-    }
     const { rows } = await query(
       `INSERT INTO project_sessions (user_id, project_id) VALUES ($1, $2) RETURNING *`,
       [userId, projectId]

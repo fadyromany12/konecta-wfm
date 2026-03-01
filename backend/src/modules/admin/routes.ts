@@ -6,6 +6,7 @@ import { findUserByEmail } from "../users/userRepository";
 import { upsertSchedule } from "../schedules/repository";
 import { approveAgentAndSetTempPassword, setTempPasswordForUser } from "../auth/service";
 import { createNotification } from "../notifications/repository";
+import { getOpenAuxForUser, closeAux, createAux } from "../auxlogs/repository";
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage() });
@@ -15,11 +16,26 @@ router.use(authenticateJWT, requireRole(["admin"]));
 router.get("/users", async (req: AuthRequest, res) => {
   try {
     const { rows } = await query(
-      `SELECT id, first_name, last_name, email, role, status, manager_id, is_approved, role_id, created_at FROM users ORDER BY created_at DESC`,
+      `SELECT id, first_name, last_name, email, role, status, manager_id, is_approved, role_id, created_at, offboarded_at, offboarding_reason FROM users ORDER BY created_at DESC`,
     );
     return res.json(rows);
   } catch (err: any) {
     return res.status(400).json({ error: { message: err.message || "Failed" } });
+  }
+});
+
+router.post("/users/:id/offboard", async (req: AuthRequest, res) => {
+  const { id } = req.params;
+  const { reason } = req.body as { reason?: string };
+  try {
+    const { rowCount } = await query(
+      `UPDATE users SET status = 'inactive', offboarded_at = now(), offboarding_reason = $2, updated_at = now() WHERE id = $1 AND role = 'agent'`,
+      [id, reason ?? null],
+    );
+    if ((rowCount ?? 0) === 0) return res.status(404).json({ error: { message: "Agent not found" } });
+    return res.json({ message: "Agent offboarded" });
+  } catch (err: any) {
+    return res.status(400).json({ error: { message: err.message || "Offboard failed" } });
   }
 });
 
@@ -158,6 +174,78 @@ router.get("/audit", async (req: AuthRequest, res) => {
     const { rows: countRows } = await query<{ count: string }>(`SELECT count(*) AS count FROM audit_logs`);
     const total = parseInt(countRows[0]?.count ?? "0", 10);
     return res.json({ items: rows, total });
+  } catch (err: any) {
+    return res.status(400).json({ error: { message: err.message || "Failed" } });
+  }
+});
+
+// Manual punch and corrections (admin, manager, RTA can fix agent attendance and AUX)
+router.post("/attendance/manual", async (req: AuthRequest, res) => {
+  const { user_id, clock_in, clock_out } = req.body as { user_id?: string; clock_in?: string; clock_out?: string };
+  if (!user_id || !clock_in) return res.status(400).json({ error: { message: "user_id and clock_in required" } });
+  try {
+    const clockInDate = new Date(clock_in);
+    const clockOutDate = clock_out ? new Date(clock_out) : null;
+    const workedSeconds = clockOutDate ? Math.max(0, Math.floor((clockOutDate.getTime() - clockInDate.getTime()) / 1000)) : 0;
+    const totalHours = `${workedSeconds} seconds`;
+    const { rows } = await query(
+      `INSERT INTO attendance (user_id, clock_in, clock_out, total_hours, is_late, is_early_logout, overtime_duration)
+       VALUES ($1, $2, $3, $4::interval, false, false, '0 seconds'::interval) RETURNING *`,
+      [user_id, clock_in, clock_out || null, totalHours],
+    );
+    return res.status(201).json(rows[0]);
+  } catch (err: any) {
+    return res.status(400).json({ error: { message: err.message || "Manual punch failed" } });
+  }
+});
+
+router.patch("/attendance/:id", async (req: AuthRequest, res) => {
+  const { id } = req.params;
+  const { clock_in, clock_out } = req.body as { clock_in?: string; clock_out?: string };
+  if (!clock_in && !clock_out) return res.status(400).json({ error: { message: "clock_in or clock_out required" } });
+  try {
+    const { rows: existing } = await query(`SELECT user_id, clock_in, clock_out FROM attendance WHERE id = $1`, [id]);
+    if (!existing.length) return res.status(404).json({ error: { message: "Attendance not found" } });
+    const cin = clock_in ? new Date(clock_in) : new Date(existing[0].clock_in);
+    const cout = clock_out !== undefined ? (clock_out ? new Date(clock_out) : null) : (existing[0].clock_out ? new Date(existing[0].clock_out) : null);
+    const workedSeconds = cout ? Math.max(0, Math.floor((cout.getTime() - cin.getTime()) / 1000)) : 0;
+    const totalHours = `${workedSeconds} seconds`;
+    const { rows } = await query(
+      `UPDATE attendance SET clock_in = $2, clock_out = $3, total_hours = $4::interval WHERE id = $1 RETURNING *`,
+      [id, cin.toISOString(), cout?.toISOString() ?? null, totalHours],
+    );
+    return res.json(rows[0]);
+  } catch (err: any) {
+    return res.status(400).json({ error: { message: err.message || "Update failed" } });
+  }
+});
+
+router.post("/aux/end-for-agent", async (req: AuthRequest, res) => {
+  const { user_id } = req.body as { user_id?: string };
+  if (!user_id) return res.status(400).json({ error: { message: "user_id required" } });
+  try {
+    const open = await getOpenAuxForUser(user_id);
+    if (!open) return res.status(404).json({ error: { message: "No open AUX for this agent" } });
+    const end = new Date();
+    const start = new Date(open.start_time);
+    const durationSeconds = Math.max(0, Math.floor((end.getTime() - start.getTime()) / 1000));
+    await closeAux({ id: open.id, end, durationSeconds, overLimit: false });
+    return res.json({ message: "AUX ended" });
+  } catch (err: any) {
+    return res.status(400).json({ error: { message: err.message || "Failed" } });
+  }
+});
+
+router.post("/aux/start-for-agent", async (req: AuthRequest, res) => {
+  const { user_id, aux_type } = req.body as { user_id?: string; aux_type?: string };
+  if (!user_id || !aux_type) return res.status(400).json({ error: { message: "user_id and aux_type required" } });
+  const allowed = ["break", "lunch", "last_break", "meeting", "coaching", "training", "technical_issue", "floor_support", "available"];
+  if (!allowed.includes(aux_type)) return res.status(400).json({ error: { message: "Invalid aux_type" } });
+  try {
+    const open = await getOpenAuxForUser(user_id);
+    if (open) return res.status(400).json({ error: { message: "Agent already has an open AUX. End it first." } });
+    const aux = await createAux(user_id, aux_type as any, new Date());
+    return res.status(201).json(aux);
   } catch (err: any) {
     return res.status(400).json({ error: { message: err.message || "Failed" } });
   }

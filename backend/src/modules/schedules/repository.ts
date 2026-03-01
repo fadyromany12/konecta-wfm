@@ -31,6 +31,14 @@ export async function getScheduleByUser(
   return rows;
 }
 
+export async function getScheduleByUserAndDate(userId: string, date: string): Promise<ScheduleRow | null> {
+  const { rows } = await query<ScheduleRow>(
+    `SELECT * FROM schedules WHERE user_id = $1 AND date = $2`,
+    [userId, date],
+  );
+  return rows[0] || null;
+}
+
 export async function getTeamSchedulesByManager(
   managerId: string,
   from: string,

@@ -1,4 +1,3 @@
-import { query } from "../../db/pool";
 import {
   Attendance,
   closeAttendanceSession,

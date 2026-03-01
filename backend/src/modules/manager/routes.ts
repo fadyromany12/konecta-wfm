@@ -1,9 +1,11 @@
 import { Router } from "express";
 import { authenticateJWT, AuthRequest, requireRole } from "../../middleware/auth";
 import { query } from "../../db/pool";
-import { getTeamSchedulesByManager } from "../schedules/repository";
+import { getTeamSchedulesByManager, upsertSchedule } from "../schedules/repository";
 import { createNotification } from "../notifications/repository";
 import { approveAgentAndSetTempPassword, setTempPasswordForUser } from "../auth/service";
+import { getLeaveById } from "../leave/repository";
+import { getOpenAuxForUser, closeAux, createAux } from "../auxlogs/repository";
 
 const router = Router();
 
@@ -455,6 +457,26 @@ router.get("/leave/pending", async (req: AuthRequest, res) => {
   }
 });
 
+router.get("/leave/team", async (req: AuthRequest, res) => {
+  const managerId = req.user!.sub;
+  try {
+    const { rows } = await query(
+      `
+        SELECT lr.*, u.first_name, u.last_name
+        FROM leave_requests lr
+        JOIN users u ON lr.user_id = u.id
+        WHERE u.manager_id = $1
+        ORDER BY lr.created_at DESC
+      `,
+      [managerId],
+    );
+    const normalized = rows.map((r: any) => ({ ...r, start_date: toDateOnly(r.start_date), end_date: toDateOnly(r.end_date) }));
+    return res.json(normalized);
+  } catch (err: any) {
+    return res.status(400).json({ error: { message: err.message || "Fetch team leave failed" } });
+  }
+});
+
 router.post("/leave/:id/approve", async (req: AuthRequest, res) => {
   const managerId = req.user!.sub;
   const { id } = req.params;
@@ -471,6 +493,21 @@ router.post("/leave/:id/approve", async (req: AuthRequest, res) => {
       `UPDATE leave_requests SET status = 'approved', approved_by = $2 WHERE id = $1`,
       [id, managerId],
     );
+    const leave = await getLeaveById(id);
+    if (leave) {
+      const start = new Date(leave.start_date + "T12:00:00").getTime();
+      const end = new Date(leave.end_date + "T12:00:00").getTime();
+      for (let t = start; t <= end; t += 86400000) {
+        const dateStr = new Date(t).toISOString().slice(0, 10);
+        await upsertSchedule({
+          userId,
+          date: dateStr,
+          shiftStart: null,
+          shiftEnd: null,
+          dayType: leave.type,
+        });
+      }
+    }
     await createNotification(userId, "Your leave request has been approved.", "leave_approved");
     return res.json({ message: "Leave approved" });
   } catch (err: any) {
@@ -540,6 +577,88 @@ router.post("/schedule-activities", async (req: AuthRequest, res) => {
       [user_id, activity_date, type, start_at, end_at, title ?? null, notes ?? null, managerId],
     );
     return res.status(201).json(rows[0]);
+  } catch (err: any) {
+    return res.status(400).json({ error: { message: err.message || "Failed" } });
+  }
+});
+
+// Manager: manual punch and AUX corrections (team members only)
+router.post("/attendance/manual", async (req: AuthRequest, res) => {
+  const managerId = req.user!.sub;
+  const { user_id, clock_in, clock_out } = req.body as { user_id?: string; clock_in?: string; clock_out?: string };
+  if (!user_id || !clock_in) return res.status(400).json({ error: { message: "user_id and clock_in required" } });
+  const { rows: u } = await query("SELECT id FROM users WHERE id = $1 AND manager_id = $2", [user_id, managerId]);
+  if (!u.length) return res.status(403).json({ error: { message: "Agent not in your team" } });
+  try {
+    const clockOutDate = clock_out ? new Date(clock_out) : null;
+    const clockInDate = new Date(clock_in);
+    const workedSeconds = clockOutDate ? Math.max(0, Math.floor((clockOutDate.getTime() - clockInDate.getTime()) / 1000)) : 0;
+    const totalHours = `${workedSeconds} seconds`;
+    const { rows } = await query(
+      `INSERT INTO attendance (user_id, clock_in, clock_out, total_hours, is_late, is_early_logout, overtime_duration)
+       VALUES ($1, $2, $3, $4::interval, false, false, '0 seconds'::interval) RETURNING *`,
+      [user_id, clock_in, clock_out || null, totalHours],
+    );
+    return res.status(201).json(rows[0]);
+  } catch (err: any) {
+    return res.status(400).json({ error: { message: err.message || "Manual punch failed" } });
+  }
+});
+
+router.patch("/attendance/:id", async (req: AuthRequest, res) => {
+  const managerId = req.user!.sub;
+  const { id } = req.params;
+  const { clock_in, clock_out } = req.body as { clock_in?: string; clock_out?: string };
+  if (!clock_in && !clock_out) return res.status(400).json({ error: { message: "clock_in or clock_out required" } });
+  const { rows: existing } = await query(`SELECT a.user_id, a.clock_in, a.clock_out FROM attendance a JOIN users u ON u.id = a.user_id WHERE a.id = $1 AND u.manager_id = $2`, [id, managerId]);
+  if (!existing.length) return res.status(404).json({ error: { message: "Attendance not found or not in your team" } });
+  try {
+    const cin = clock_in ? new Date(clock_in) : new Date(existing[0].clock_in);
+    const cout = clock_out !== undefined ? (clock_out ? new Date(clock_out) : null) : (existing[0].clock_out ? new Date(existing[0].clock_out) : null);
+    const workedSeconds = cout ? Math.max(0, Math.floor((cout.getTime() - cin.getTime()) / 1000)) : 0;
+    const totalHours = `${workedSeconds} seconds`;
+    const { rows } = await query(
+      `UPDATE attendance SET clock_in = $2, clock_out = $3, total_hours = $4::interval WHERE id = $1 RETURNING *`,
+      [id, cin.toISOString(), cout?.toISOString() ?? null, totalHours],
+    );
+    return res.json(rows[0]);
+  } catch (err: any) {
+    return res.status(400).json({ error: { message: err.message || "Update failed" } });
+  }
+});
+
+router.post("/aux/end-for-agent", async (req: AuthRequest, res) => {
+  const managerId = req.user!.sub;
+  const { user_id } = req.body as { user_id?: string };
+  if (!user_id) return res.status(400).json({ error: { message: "user_id required" } });
+  const { rows: u } = await query("SELECT id FROM users WHERE id = $1 AND manager_id = $2", [user_id, managerId]);
+  if (!u.length) return res.status(403).json({ error: { message: "Agent not in your team" } });
+  try {
+    const open = await getOpenAuxForUser(user_id);
+    if (!open) return res.status(404).json({ error: { message: "No open AUX for this agent" } });
+    const end = new Date();
+    const start = new Date(open.start_time);
+    const durationSeconds = Math.max(0, Math.floor((end.getTime() - start.getTime()) / 1000));
+    await closeAux({ id: open.id, end, durationSeconds, overLimit: false });
+    return res.json({ message: "AUX ended" });
+  } catch (err: any) {
+    return res.status(400).json({ error: { message: err.message || "Failed" } });
+  }
+});
+
+router.post("/aux/start-for-agent", async (req: AuthRequest, res) => {
+  const managerId = req.user!.sub;
+  const { user_id, aux_type } = req.body as { user_id?: string; aux_type?: string };
+  if (!user_id || !aux_type) return res.status(400).json({ error: { message: "user_id and aux_type required" } });
+  const { rows: u } = await query("SELECT id FROM users WHERE id = $1 AND manager_id = $2", [user_id, managerId]);
+  if (!u.length) return res.status(403).json({ error: { message: "Agent not in your team" } });
+  const allowed = ["break", "lunch", "last_break", "meeting", "coaching", "training", "technical_issue", "floor_support", "available"];
+  if (!allowed.includes(aux_type)) return res.status(400).json({ error: { message: "Invalid aux_type" } });
+  try {
+    const open = await getOpenAuxForUser(user_id);
+    if (open) return res.status(400).json({ error: { message: "Agent already has an open AUX. End it first." } });
+    const aux = await createAux(user_id, aux_type as any, new Date());
+    return res.status(201).json(aux);
   } catch (err: any) {
     return res.status(400).json({ error: { message: err.message || "Failed" } });
   }
