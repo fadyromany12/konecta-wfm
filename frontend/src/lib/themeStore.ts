@@ -9,7 +9,7 @@ interface ThemeState {
 }
 
 export const useThemeStore = create<ThemeState>((set) => ({
-  theme: "dark",
+  theme: "light",
   setTheme: (theme) => {
     if (typeof window !== "undefined") {
       localStorage.setItem("konecta-theme", theme);
@@ -20,7 +20,7 @@ export const useThemeStore = create<ThemeState>((set) => ({
   hydrate: () => {
     if (typeof window === "undefined") return;
     const stored = localStorage.getItem("konecta-theme") as Theme | null;
-    const theme = stored === "light" ? "light" : "dark";
+    const theme = stored === "dark" ? "dark" : "light";
     document.documentElement.classList.toggle("dark", theme === "dark");
     set({ theme });
   },

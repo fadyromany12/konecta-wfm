@@ -36,12 +36,12 @@ export default function RootLayout({ children }: { children: ReactNode }) {
       <head>
         <script
           dangerouslySetInnerHTML={{
-            __html: `(function(){var t=localStorage.getItem("konecta-theme");document.documentElement.classList.toggle("dark",t!=="light");})();`,
+            __html: `(function(){var t=localStorage.getItem("konecta-theme");document.documentElement.classList.toggle("dark",t==="dark");})();`,
           }}
         />
       </head>
-      <body className="min-h-screen antialiased">
-        <div className="flex min-h-screen">
+      <body className="min-h-screen antialiased transition-theme" style={{ transition: "background 0.4s cubic-bezier(0.32, 0.72, 0, 1), color 0.4s cubic-bezier(0.32, 0.72, 0, 1)" }}>
+        <div className="flex min-h-screen transition-colors duration-[400ms]">
           {showSidebar && (
             <aside className="hidden shrink-0 md:block">
               <Sidebar />
@@ -49,14 +49,14 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           )}
           <main className="flex min-h-screen flex-1 flex-col">
             {showSidebar && (
-              <header className="flex items-center justify-end gap-3 border-b border-[var(--border-sidebar)] bg-[var(--bg-sidebar)] px-4 py-3 backdrop-blur-sm">
+              <header className="flex items-center justify-end gap-3 border-b border-[var(--border-sidebar)] bg-[var(--bg-sidebar)] px-4 py-3 backdrop-blur-sm transition-[background,border-color] duration-[400ms]">
                 <NotificationsDropdown />
                 <ThemeToggle />
               </header>
             )}
             <div className="flex-1 p-6 md:p-8 lg:p-10">
               <div className="mx-auto max-w-6xl">
-                <PageTransition>{children}</PageTransition>
+                {isAuthPage ? children : <PageTransition>{children}</PageTransition>}
               </div>
             </div>
           </main>

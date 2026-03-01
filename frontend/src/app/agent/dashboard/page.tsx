@@ -232,7 +232,7 @@ export default function AgentDashboardPage() {
         </FadeInItem>
         <FadeInItem>
           <motion.div
-            className={`card transition-all duration-300 hover:border-brand/30 hover:shadow-brand/10 ${openAttendance ? "ring-1 ring-violet-500/40 shadow-brand-glow" : ""}`}
+            className={`card transition-all duration-300 hover:border-brand/30 hover:shadow-brand/10 ${openAttendance ? "ring-1 ring-brand/50 shadow-brand-glow" : ""}`}
             whileHover={{ y: -4, scale: 1.01 }}
             transition={{ type: "tween", duration: 0.2, ease: [0.32, 0.72, 0, 1] }}
           >

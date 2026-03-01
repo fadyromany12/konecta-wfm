@@ -3,6 +3,7 @@
 import { FormEvent, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { motion } from "framer-motion";
 import { apiRequest } from "../../lib/api";
 import { useAuthStore } from "../../lib/authStore";
 
@@ -69,8 +70,13 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="flex min-h-[85vh] items-center justify-center px-4">
-      <div className="card w-full max-w-md shadow-2xl">
+    <div className="flex min-h-[85vh] items-center justify-center px-4 bg-[var(--bg-app)]">
+      <motion.div
+        className="card auth-card w-full max-w-md shadow-2xl"
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.35, ease: [0.32, 0.72, 0, 1] }}
+      >
         <div className="mb-8">
           <h1 className="text-2xl font-bold tracking-tight text-theme-primary md:text-3xl">
             Konecta WFM
@@ -119,7 +125,7 @@ export default function LoginPage() {
             </Link>
           </p>
         </form>
-      </div>
+      </motion.div>
     </div>
   );
 }

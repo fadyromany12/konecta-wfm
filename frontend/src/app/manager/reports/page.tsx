@@ -99,7 +99,7 @@ export default function ManagerReportsPage() {
       </div>
       <div className="card max-w-md">
         <p className="text-slate-400">For daily breakdown and payroll exports, use the admin Reports page if you have access.</p>
-        <Link href="/manager/dashboard" className="mt-4 inline-block text-[var(--color-brand-light)] hover:underline">
+        <Link href="/manager/dashboard" className="mt-4 inline-block text-brand-light hover:underline">
           → Team Dashboard
         </Link>
       </div>

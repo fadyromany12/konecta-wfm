@@ -82,9 +82,10 @@ function SidebarInner() {
 
   return (
     <motion.aside
-      className="sidebar-bg flex w-72 min-h-screen flex-col shrink-0 backdrop-blur-xl border-r border-white/10 shadow-[4px_0_24px_-4px_rgba(0,0,0,0.4)]"
+      className="sidebar-bg flex w-72 min-h-screen flex-col shrink-0 backdrop-blur-xl border-r border-[var(--border-sidebar)] shadow-[2px_0_16px_-2px_rgba(0,0,0,0.08)] dark:shadow-[4px_0_24px_-4px_rgba(0,0,0,0.25)]"
       initial={false}
       transition={{ type: "tween", duration: 0.2 }}
+      style={{ transition: "background 0.4s ease, border-color 0.4s ease, box-shadow 0.4s ease" }}
     >
       {/* Logo */}
       <div className="border-b border-[var(--border-sidebar)] px-6 py-5">

@@ -48,7 +48,7 @@ export default function ConfirmDialog({
         aria-hidden
       />
       <div
-        className="relative w-full max-w-md rounded-2xl border border-slate-700 bg-slate-900 p-6 shadow-2xl animate-zoom-in"
+        className="relative w-full max-w-md rounded-2xl border border-[var(--border-card)] bg-[var(--bg-card)] p-6 shadow-2xl backdrop-blur-xl animate-zoom-in"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex gap-4">
@@ -60,10 +60,10 @@ export default function ConfirmDialog({
             <Icon className="h-6 w-6" />
           </div>
           <div className="flex-1">
-            <h2 id="confirm-title" className="text-lg font-semibold text-white">
+            <h2 id="confirm-title" className="text-lg font-semibold text-[var(--text-primary)]">
               {title}
             </h2>
-            <p className="mt-2 text-sm text-slate-400">{message}</p>
+            <p className="mt-2 text-sm text-[var(--text-muted)]">{message}</p>
             <div className="mt-6 flex gap-3">
               <button
                 type="button"
