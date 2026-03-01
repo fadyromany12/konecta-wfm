@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuthStore } from "../../../lib/authStore";
 import { apiRequest } from "../../../lib/api";
+import { safeLabel } from "../../../lib/format";
 
 interface ScheduleRow {
   id: string;
@@ -143,7 +144,7 @@ export default function AgentSchedulePage() {
               {schedule.map((s) => (
                 <tr key={s.id} className="border-b border-slate-800">
                   <td className="p-2">{s.date}</td>
-                  <td className="p-2 capitalize">{s.day_type.replace("_", " ")}</td>
+                  <td className="p-2 capitalize">{safeLabel(s.day_type)}</td>
                   <td className="p-2">
                     {s.shift_start ? new Date(s.shift_start).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "-"}
                   </td>

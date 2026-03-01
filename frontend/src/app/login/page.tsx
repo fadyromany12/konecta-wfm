@@ -49,6 +49,10 @@ export default function LoginPage() {
         router.push("/agent/dashboard");
       } else if (res.user.role === "manager") {
         router.push("/manager/dashboard");
+      } else if (res.user.role === "project_manager") {
+        router.push("/project-manager/dashboard");
+      } else if (res.user.role === "rta") {
+        router.push("/rta/dashboard");
       } else {
         router.push("/admin/dashboard");
       }
@@ -66,18 +70,18 @@ export default function LoginPage() {
 
   return (
     <div className="flex min-h-[85vh] items-center justify-center px-4">
-      <div className="card w-full max-w-md border-brand/20 shadow-2xl shadow-black/30">
+      <div className="card w-full max-w-md shadow-2xl">
         <div className="mb-8">
-          <h1 className="text-2xl font-bold tracking-tight text-white md:text-3xl">
+          <h1 className="text-2xl font-bold tracking-tight text-theme-primary md:text-3xl">
             Konecta WFM
           </h1>
-          <p className="mt-2 text-slate-400">
+          <p className="mt-2 text-theme-muted">
             Sign in with your Konecta email to access your dashboard.
           </p>
         </div>
         <form onSubmit={onSubmit} className="space-y-5">
           <div>
-            <label className="mb-1 block text-sm text-slate-300">Email</label>
+            <label className="mb-1 block text-sm text-theme-secondary">Email</label>
             <input
               type="email"
               className="input-field w-full"
@@ -87,7 +91,7 @@ export default function LoginPage() {
             />
           </div>
           <div>
-            <label className="mb-1 block text-sm text-slate-300">Password</label>
+            <label className="mb-1 block text-sm text-theme-secondary">Password</label>
             <input
               type="password"
               className="input-field w-full"
@@ -104,13 +108,13 @@ export default function LoginPage() {
           <button type="submit" className="btn-primary w-full py-3.5" disabled={loading}>
             {loading ? "Signing in…" : "Sign in"}
           </button>
-          <p className="text-center text-sm text-slate-500">
+          <p className="text-center text-sm text-theme-muted">
             No account?{" "}
-            <Link href="/register" className="font-medium text-brand-light hover:underline">
+            <Link href="/register" className="font-medium text-[rgb(var(--color-brand-light))] hover:underline">
               Register
             </Link>
             {" · "}
-            <Link href="/forgot-password" className="font-medium text-slate-400 hover:text-brand-light hover:underline">
+            <Link href="/forgot-password" className="font-medium text-theme-muted hover:text-[rgb(var(--color-brand-light))] hover:underline">
               Forgot password?
             </Link>
           </p>

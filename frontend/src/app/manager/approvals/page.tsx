@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useAuthStore } from "../../../lib/authStore";
 import { apiRequest } from "../../../lib/api";
 import { toast } from "../../../lib/toast";
+import { safeLabel, formatDateOnly } from "../../../lib/format";
 import ConfirmDialog from "../../../components/ui/ConfirmDialog";
 import { TableSkeleton } from "../../../components/ui/Skeleton";
 
@@ -181,8 +182,8 @@ export default function ManagerApprovalsPage() {
               {leave.map((r) => (
                 <tr key={r.id} className="border-b border-slate-800">
                   <td className="p-2">{r.first_name} {r.last_name}</td>
-                  <td className="p-2 capitalize">{r.type.replace("_", " ")}</td>
-                  <td className="p-2">{r.start_date} → {r.end_date}</td>
+                  <td className="p-2 capitalize">{safeLabel(r.type)}</td>
+                  <td className="p-2">{formatDateOnly(r.start_date)} → {formatDateOnly(r.end_date)}</td>
                   <td className="p-2 max-w-xs truncate">{r.reason || "-"}</td>
                   <td className="p-2">
                     <button

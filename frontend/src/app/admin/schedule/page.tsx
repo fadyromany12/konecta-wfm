@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { useAuthStore } from "../../../lib/authStore";
 import { apiRequest } from "../../../lib/api";
@@ -49,6 +49,16 @@ export default function AdminSchedulePage() {
   const [importResult, setImportResult] = useState<{ imported: number; errors: string[] } | null>(null);
   const [editCell, setEditCell] = useState<{ userId: string; date: string } | null>(null);
   const [saving, setSaving] = useState(false);
+  const [copiedRow, setCopiedRow] = useState<{ userId: string; cells: { date: string; start: string; end: string; dayType: string }[] } | null>(null);
+  const [copiedCol, setCopiedCol] = useState<{ date: string; cells: { userId: string; start: string; end: string; dayType: string }[] } | null>(null);
+  const [savedGroups, setSavedGroups] = useState<{ name: string; agentIds: string[] }[]>(() => {
+    if (typeof window === "undefined") return [];
+    try {
+      const raw = localStorage.getItem("schedule_agent_groups");
+      return raw ? JSON.parse(raw) : [];
+    } catch { return []; }
+  });
+  const [filterGroup, setFilterGroup] = useState<string>("");
 
   useEffect(() => {
     if (!user) router.replace("/login");
@@ -94,6 +104,89 @@ export default function AdminSchedulePage() {
       .finally(() => setLoading(false));
   }
 
+  function copyRow(agentId: string) {
+    const cells = dates.map((date) => {
+      const row = scheduleMap.get(`${agentId}:${date}`);
+      const start = row?.shift_start ? new Date(row.shift_start).toTimeString().slice(0, 5) : "";
+      const end = row?.shift_end ? new Date(row.shift_end).toTimeString().slice(0, 5) : "";
+      return { date, start, end, dayType: row?.day_type || "work" };
+    });
+    setCopiedRow({ userId: agentId, cells });
+  }
+
+  async function pasteRow(agentId: string) {
+    if (!copiedRow || !token) return;
+    setSaving(true);
+    for (const c of copiedRow.cells) {
+      try {
+        await apiRequest("/admin/schedules", {
+          method: "PUT",
+          body: JSON.stringify({
+            user_id: agentId,
+            date: c.date,
+            shift_start: c.start ? `${c.date}T${c.start}:00` : null,
+            shift_end: c.end ? `${c.date}T${c.end}:00` : null,
+            day_type: c.dayType,
+          }),
+        }, token);
+      } catch { /* skip */ }
+    }
+    setSaving(false);
+    const res = await apiRequest<ScheduleRow[]>(`/admin/schedules?from=${from}&to=${to}`, {}, token);
+    setSchedules(res);
+  }
+
+  function copyCol(date: string) {
+    const agents = users.filter((u) => u.role === "agent");
+    const cells = agents.map((u) => {
+      const row = scheduleMap.get(`${u.id}:${date}`);
+      const start = row?.shift_start ? new Date(row.shift_start).toTimeString().slice(0, 5) : "";
+      const end = row?.shift_end ? new Date(row.shift_end).toTimeString().slice(0, 5) : "";
+      return { userId: u.id, start, end, dayType: row?.day_type || "work" };
+    });
+    setCopiedCol({ date, cells });
+  }
+
+  async function pasteCol(date: string) {
+    if (!copiedCol || !token) return;
+    setSaving(true);
+    for (const c of copiedCol.cells) {
+      try {
+        await apiRequest("/admin/schedules", {
+          method: "PUT",
+          body: JSON.stringify({
+            user_id: c.userId,
+            date,
+            shift_start: c.start ? `${date}T${c.start}:00` : null,
+            shift_end: c.end ? `${date}T${c.end}:00` : null,
+            day_type: c.dayType,
+          }),
+        }, token);
+      } catch { /* skip */ }
+    }
+    setSaving(false);
+    const res = await apiRequest<ScheduleRow[]>(`/admin/schedules?from=${from}&to=${to}`, {}, token);
+    setSchedules(res);
+  }
+
+  function saveGroup(name: string, agentIds: string[]) {
+    const next = [...savedGroups.filter((g) => g.name !== name), { name, agentIds }];
+    setSavedGroups(next);
+    if (typeof window !== "undefined") localStorage.setItem("schedule_agent_groups", JSON.stringify(next));
+  }
+
+  const agentList = useMemo(() => users.filter((u) => u.role === "agent"), [users]);
+  const filteredAgents = useMemo(
+    () =>
+      filterGroup
+        ? agentList.filter((u) => {
+            const g = savedGroups.find((gr) => gr.name === filterGroup);
+            return g?.agentIds.includes(u.id);
+          })
+        : agentList,
+    [agentList, filterGroup, savedGroups],
+  );
+
   async function saveCell(userId: string, date: string, shiftStart: string, shiftEnd: string, dayType: string) {
     if (!token) return;
     setSaving(true);
@@ -103,8 +196,8 @@ export default function AdminSchedulePage() {
         body: JSON.stringify({
           user_id: userId,
           date,
-          shift_start: shiftStart || null,
-          shift_end: shiftEnd || null,
+          shift_start: shiftStart ? `${date}T${shiftStart}:00` : null,
+          shift_end: shiftEnd ? `${date}T${shiftEnd}:00` : null,
           day_type: dayType,
         }),
       }, token);
@@ -118,13 +211,21 @@ export default function AdminSchedulePage() {
     }
   }
 
-  const scheduleMap = new Map<string, ScheduleRow>();
-  schedules.forEach((s) => scheduleMap.set(`${s.user_id}:${s.date}`, s));
+  const scheduleMap = useMemo(() => {
+    const m = new Map<string, ScheduleRow>();
+    schedules.forEach((s) => m.set(`${s.user_id}:${s.date}`, s));
+    return m;
+  }, [schedules]);
 
-  const dates: string[] = [];
-  for (let d = new Date(from); d <= new Date(to); d.setDate(d.getDate() + 1)) {
-    dates.push(d.toISOString().slice(0, 10));
-  }
+  const dates = useMemo(() => {
+    const arr: string[] = [];
+    const fromT = new Date(from).getTime();
+    const toT = new Date(to).getTime();
+    for (let t = fromT; t <= toT; t += 86400000) {
+      arr.push(new Date(t).toISOString().slice(0, 10));
+    }
+    return arr;
+  }, [from, to]);
 
   if (!user) return null;
 
@@ -170,7 +271,19 @@ export default function AdminSchedulePage() {
             <label className="mb-1 block text-sm text-slate-400">To</label>
             <input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="input-field" />
           </div>
+          <div>
+            <label className="mb-1 block text-sm text-slate-400">Filter by group</label>
+            <select value={filterGroup} onChange={(e) => setFilterGroup(e.target.value)} className="input-field min-w-[140px]">
+              <option value="">All agents</option>
+              {savedGroups.map((g) => (
+                <option key={g.name} value={g.name}>{g.name}</option>
+              ))}
+            </select>
+          </div>
         </div>
+        <p className="text-xs text-slate-500">
+          Copy row: copy one agent’s row. Paste row: paste into that agent. Copy column: copy one day. Paste column: paste into another day.
+        </p>
 
         {loading ? (
           <p className="text-slate-400">Loading…</p>
@@ -179,20 +292,26 @@ export default function AdminSchedulePage() {
             <table className="w-full border-collapse text-sm">
               <thead>
                 <tr className="border-b border-slate-700 text-left text-slate-400">
-                  <th className="sticky left-0 z-10 min-w-[140px] bg-slate-900 p-2">User</th>
-                  {dates.slice(0, 14).map((date) => (
+                  <th className="sticky left-0 z-10 min-w-[200px] bg-slate-900 p-2">User</th>
+                  {(dates.length > 14 ? dates.slice(0, 14) : dates).map((date) => (
                     <th key={date} className="min-w-[90px] p-2">
-                      {new Date(date).toLocaleDateString("en-US", { weekday: "short", month: "numeric", day: "numeric" })}
+                      <div>{new Date(date).toLocaleDateString("en-US", { weekday: "short", month: "numeric", day: "numeric" })}</div>
+                      <button type="button" onClick={() => copyCol(date)} className="text-xs text-slate-500 hover:underline">Copy</button>
+                      <button type="button" onClick={() => pasteCol(date)} disabled={!copiedCol} className="ml-1 text-xs text-slate-500 hover:underline disabled:opacity-50">Paste</button>
                     </th>
                   ))}
                   {dates.length > 14 && <th className="p-2">…</th>}
                 </tr>
               </thead>
               <tbody>
-                {users.filter((u) => u.role === "agent").map((u) => (
+                {filteredAgents.map((u) => (
                   <tr key={u.id} className="border-b border-slate-800">
                     <td className="sticky left-0 z-10 bg-slate-900/95 p-2 text-slate-200">
-                      {u.first_name} {u.last_name}
+                      <div className="flex items-center gap-1">
+                        <span>{u.first_name} {u.last_name}</span>
+                        <button type="button" onClick={() => copyRow(u.id)} className="text-xs text-slate-500 hover:underline">Copy</button>
+                        <button type="button" onClick={() => pasteRow(u.id)} disabled={!copiedRow} className="text-xs text-slate-500 hover:underline disabled:opacity-50">Paste</button>
+                      </div>
                     </td>
                     {(dates.length > 14 ? dates.slice(0, 14) : dates).map((date) => {
                       const key = `${u.id}:${date}`;
@@ -231,6 +350,14 @@ export default function AdminSchedulePage() {
             </table>
           </div>
         )}
+        <div className="mt-4 rounded border border-slate-700 bg-slate-800/50 p-3">
+          <h3 className="text-sm font-medium text-slate-300">Saved agent groups</h3>
+          <p className="text-xs text-slate-500">Filter by group above. Save current list as a group: enter name and click Save.</p>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <input type="text" id="groupName" placeholder="Group name" className="input-field w-40 text-sm" />
+            <button type="button" onClick={() => { const name = (document.getElementById("groupName") as HTMLInputElement)?.value?.trim(); if (name) saveGroup(name, filteredAgents.map((a) => a.id)); }} className="btn-secondary text-sm">Save current as group</button>
+          </div>
+        </div>
       </div>
     </div>
   );

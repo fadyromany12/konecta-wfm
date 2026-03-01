@@ -8,7 +8,8 @@ router.use(authenticateJWT, requireRole(["agent", "manager", "admin"]));
 
 router.post("/clock-in", async (req: AuthRequest, res) => {
   try {
-    const attendance = await clockIn(req.user!.sub);
+    const workLocation = req.body?.work_location === "WFH" ? "WFH" : req.body?.work_location === "WFO" ? "WFO" : undefined;
+    const attendance = await clockIn(req.user!.sub, workLocation);
     return res.status(201).json(attendance);
   } catch (err: any) {
     return res.status(400).json({ error: { message: err.message || "Clock in failed" } });

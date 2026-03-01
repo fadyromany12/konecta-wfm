@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useAuthStore } from "../../../lib/authStore";
 import { apiRequest } from "../../../lib/api";
 import { toast } from "../../../lib/toast";
+import { formatTotalHours, safeLabel } from "../../../lib/format";
 
 interface TeamRow {
   user_id: string;
@@ -13,9 +14,10 @@ interface TeamRow {
   last_name: string;
   clock_in: string | null;
   clock_out: string | null;
-  total_hours: string | null;
+  total_hours?: string | number | null;
   is_late: boolean;
   is_early_logout: boolean;
+  work_location?: string | null;
 }
 
 interface PendingAgent {
@@ -49,6 +51,8 @@ export default function ManagerDashboardPage() {
   const [tempPassword, setTempPassword] = useState<{ name: string; password: string } | null>(null);
   const [approvingId, setApprovingId] = useState<string | null>(null);
   const [settingTempId, setSettingTempId] = useState<string | null>(null);
+  const [teamSummary, setTeamSummary] = useState<{ aux: Record<string, number>; leave: Record<string, number> } | null>(null);
+  const [liveAuxToday, setLiveAuxToday] = useState<{ user_id: string; first_name: string; last_name: string; aux_type: string; start_time: string }[]>([]);
 
   useEffect(() => {
     if (!user || !token) {
@@ -66,22 +70,30 @@ export default function ManagerDashboardPage() {
     if (!token) return;
     setLoading(true);
     try {
-      const [data, leave, swaps, agents, resets] = await Promise.all([
+      const to = new Date().toISOString().slice(0, 10);
+      const from = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
+      const [data, leave, swaps, agents, resets, summary, liveAux] = await Promise.all([
         apiRequest<TeamRow[]>(`/manager/attendance/team?date=${date}`, {}, token),
         apiRequest<unknown[]>(`/manager/leave/pending`, {}, token),
         apiRequest<unknown[]>(`/shift-swaps/manager/pending`, {}, token),
         apiRequest<PendingAgent[]>(`/manager/pending-approvals`, {}, token),
         apiRequest<ResetRequest[]>(`/manager/password-reset-requests`, {}, token),
+        apiRequest<{ aux: Record<string, number>; leave: Record<string, number> }>(`/manager/team-summary?from=${from}&to=${to}`, {}, token),
+        apiRequest<{ user_id: string; first_name: string; last_name: string; aux_type: string; start_time: string }[]>(`/manager/team-aux-today`, {}, token),
       ]);
       setTeam(data);
       setPendingLeave(leave.length);
       setPendingSwaps(swaps.length);
       setPendingAgents(agents);
       setResetRequests(resets);
+      setTeamSummary(summary);
+      setLiveAuxToday(Array.isArray(liveAux) ? liveAux : []);
     } catch {
       setTeam([]);
       setPendingAgents([]);
       setResetRequests([]);
+      setTeamSummary(null);
+      setLiveAuxToday([]);
     } finally {
       setLoading(false);
     }
@@ -154,6 +166,49 @@ export default function ManagerDashboardPage() {
           <p className="mt-1 text-xs text-slate-400">Leave: {pendingLeave} · Swaps: {pendingSwaps}</p>
         </Link>
       </div>
+
+      {/* Live AUX today: who is on which AUX right now and since when */}
+      <div className="card">
+        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-slate-400">Live AUX today (real-time)</h2>
+        {liveAuxToday.length === 0 ? (
+          <p className="text-slate-500 text-sm">No one on AUX right now.</p>
+        ) : (
+          <div className="overflow-auto">
+            <table className="w-full border-collapse text-sm">
+              <thead>
+                <tr className="border-b border-slate-700 text-left text-slate-400">
+                  <th className="p-2">Agent</th>
+                  <th className="p-2">AUX code</th>
+                  <th className="p-2">Since</th>
+                </tr>
+              </thead>
+              <tbody>
+                {liveAuxToday.map((r) => (
+                  <tr key={`${r.user_id}-${r.start_time}`} className="border-b border-slate-800">
+                    <td className="p-2 font-medium text-slate-100">{r.first_name} {r.last_name}</td>
+                    <td className="p-2 capitalize text-slate-200">{safeLabel(r.aux_type)}</td>
+                    <td className="p-2 text-slate-300">{new Date(r.start_time).toLocaleTimeString()}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {teamSummary && Object.keys(teamSummary.leave).length > 0 && (
+        <div className="card">
+          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-slate-400">Leave types (approved, last 30 days)</h2>
+          <div className="flex flex-wrap gap-2">
+            {Object.entries(teamSummary.leave).map(([type, cnt]) => (
+              <span key={type} className="rounded-lg bg-slate-700/50 px-3 py-1.5 text-sm text-slate-200">
+                <span className="capitalize">{safeLabel(type)}</span>
+                <span className="ml-1 font-semibold text-white">{cnt}</span>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
 
       {pendingAgents.length > 0 && (
         <div className="card">
@@ -271,6 +326,7 @@ export default function ManagerDashboardPage() {
                   <th className="p-2">Hours</th>
                   <th className="p-2">Late</th>
                   <th className="p-2">Early out</th>
+                  <th className="p-2">Location</th>
                 </tr>
               </thead>
               <tbody>
@@ -285,14 +341,15 @@ export default function ManagerDashboardPage() {
                     <td className="p-2">
                       {t.clock_out ? new Date(t.clock_out).toLocaleTimeString() : t.clock_in ? "—" : "-"}
                     </td>
-                    <td className="p-2">{t.total_hours ? String(t.total_hours).replace("00:", "") : "-"}</td>
+                    <td className="p-2">{formatTotalHours(t.total_hours ?? null)}</td>
                     <td className="p-2">{t.is_late ? "Yes" : "No"}</td>
                     <td className="p-2">{t.is_early_logout ? "Yes" : "No"}</td>
+                    <td className="p-2">{t.work_location === "WFH" ? "WFH" : t.work_location === "WFO" ? "WFO" : "—"}</td>
                   </tr>
                 ))}
                 {team.length === 0 && (
                   <tr>
-                    <td colSpan={6} className="p-4 text-center text-slate-500">
+                    <td colSpan={7} className="p-4 text-center text-slate-500">
                       No team members or no data for this date.
                     </td>
                   </tr>

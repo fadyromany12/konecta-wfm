@@ -23,6 +23,8 @@ const files = [
   path.join(__dirname, "..", "sql", "migrations_extra.sql"),
   path.join(__dirname, "..", "sql", "migrations_enterprise.sql"),
   path.join(__dirname, "..", "sql", "migrations_approval_roles.sql"),
+  path.join(__dirname, "..", "sql", "migrations_projects_hierarchy.sql"),
+  path.join(__dirname, "..", "sql", "migrations_breaks_rta_grid.sql"),
 ];
 
 async function run() {

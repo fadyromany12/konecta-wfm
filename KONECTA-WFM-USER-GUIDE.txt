@@ -1,0 +1,186 @@
+================================================================================
+  KONECTA WFM - USER GUIDE
+  Roles, features, and how to use the application
+================================================================================
+
+1. ROLES OVERVIEW
+--------------------------------------------------------------------------------
+- AGENT: Front-line staff. Clocks in/out, logs into projects, requests leave,
+  swap shifts, views schedule and activity grid.
+- MANAGER: Manages a team. Approves agents, leave, shift swaps; views team
+  schedule, wallboard, reports; can transfer agents (with approval); adds
+  coachings/meetings for team members; views activity grid and hierarchy.
+- PROJECT MANAGER (PM): Assigned to one or more projects. Full access within
+  that project: sees agents and sessions, can set break configuration for
+  the project.
+- RTA (Real Time Analyst): Assigned to one or more projects. Manages schedules
+  for all agents in a project: sets login time, logout time, and break times;
+  can add coachings/meetings. Views activity grid.
+- ADMIN: Full access. Manages users, projects, roles, RTA and PM assignment,
+  break config per project, schedule management, audit logs, settings.
+
+
+2. REGISTRATION AND LOGIN
+--------------------------------------------------------------------------------
+- New users register at /register with a Konecta email (@konecta.com).
+- They must select their manager from the dropdown.
+- After registration, an admin or the selected manager approves the account
+  and can set a temporary password.
+- Login at /login. After login you are redirected by role (agent, manager,
+  project manager, RTA, or admin dashboard).
+
+
+3. AGENT
+--------------------------------------------------------------------------------
+- Dashboard: Overview and quick links.
+- Schedule: View my schedule (shift start/end, breaks when set).
+- My Requests: Leave requests and status.
+- Swap Shifts: Request to swap a shift with another agent (manager approval).
+- My Projects: Log into one project at a time for the day (clock in/out of
+  project). Only one active project session per day.
+- Activity Grid: 24-hour view of my day: clock-in/out, AUX (breaks), scheduled
+  breaks, coachings/meetings, with flags for lateness or break violations.
+- Org View: See up to 3 managers above me and my colleagues (same direct manager).
+- Profile: Change password, view profile.
+
+
+4. MANAGER
+--------------------------------------------------------------------------------
+- Team Dashboard: Overview of team.
+- Wallboard: Team visibility.
+- Approvals: Approve/reject leave and shift swaps for the team.
+- Transfers: Request to transfer an agent to another manager (your manager or
+  admin approves). View "My requests" and "Pending my approval".
+- Reports: Team reports.
+- Schedule: View team schedule.
+- Team Members: List direct reports.
+- Coachings & Meetings: Add a coaching, meeting, or training for a team member
+  (date, time, optional title). These appear on the Activity Grid.
+- Hierarchy: Tree view of your team and their reports.
+- Activity Grid: Filter by date (and optionally agent) to see 24h timeline
+  with violations (lateness, break over limit).
+- Org View: 3 managers above, colleagues.
+- Profile: Change password, profile.
+
+
+5. PROJECT MANAGER (PM)
+--------------------------------------------------------------------------------
+- Project Dashboard: List projects you are PM for. Select one to see agents
+  who have logged in and recent project sessions.
+- My Projects: Log in/out of projects (if you also work as agent).
+- Activity Grid: View activity with optional filters.
+- Org View: 3 managers above, colleagues.
+- Profile: Change password, profile.
+
+Break configuration (per project):
+- Admin can open Break config from Projects page (Break config link per project).
+- PM can open the same Break config page for projects they manage (navigate to
+  /project/break-config?projectId=...&name=...). Set break labels and durations
+  (e.g. first_break 15 min, lunch 30 min, last_break 15 min).
+
+
+6. RTA (Real Time Analyst)
+--------------------------------------------------------------------------------
+- Scheduler: Select a project and date range. View all schedules for agents in
+  that project. Edit login time, logout time, and up to 3 break slots per day.
+  Create an empty schedule for an agent/date then Edit to set times. Shifts
+  can start and end at any time (same day or next day).
+- Activity Grid: Filter by date, project, and optionally agent. See 24h timeline
+  and violations.
+- Profile: Change password, profile.
+
+RTA is assigned to projects by Admin: Projects -> Assign RTA per project.
+
+
+7. ADMIN
+--------------------------------------------------------------------------------
+- All Users: List, search, change role. Approve pending agents, set temp password.
+- Projects: Create/edit/delete projects. Assign PM and RTA per project. Open
+  Break config per project to set break rules (e.g. first_break 15, lunch 30,
+  last_break 15 minutes).
+- System Reports: Reports and exports.
+- Roles & Permissions: Manage roles and their permissions.
+- Wallboard: System wallboard.
+- Schedule Management: Create/edit schedules for any user (import CSV or single
+  put). Can set project_id and break_1_start/end, break_2_start/end, break_3_start/end.
+- Hierarchy: Full organization tree.
+- Transfers: As approver, see pending transfer requests and Approve/Reject.
+- Audit Logs: System audit.
+- Settings: Application settings.
+- Activity Grid: Filter by date, project, agent.
+- Org View: 3 managers above, colleagues.
+- Profile: Change password, profile.
+
+
+8. BREAK CONFIGURATION (PER PROJECT)
+--------------------------------------------------------------------------------
+- Who: Admin and Project Manager (for their projects).
+- Where: Projects page -> Break config (admin); or /project/break-config?projectId=...&name=...
+- What: Define break labels and duration in minutes (e.g. first_break 15,
+  lunch 30, last_break 15). Used for validation and display. Order by sort_order.
+
+
+9. SCHEDULES AND BREAKS
+--------------------------------------------------------------------------------
+- Schedules have: date, shift_start, shift_end (can be any time, next day OK),
+  optional project_id, and up to 3 break slots: break_1_start/end, break_2_start/end,
+  break_3_start/end.
+- Admin: Schedule Management -> put schedule with user_id, date, shift_start, shift_end,
+  optional project_id and break_* fields.
+- RTA: Scheduler -> select project and date range, Edit a row to set login,
+  logout, and break times; or Create empty schedule then Edit.
+- Agents see their schedule (with breaks) in Schedule and use clock-in/out and
+  AUX (break/lunch) as before. Break violations (over limit) are flagged in the
+  Activity Grid.
+
+
+10. ACTIVITY GRID (24H)
+--------------------------------------------------------------------------------
+- Who: All roles (agent sees self; manager sees team; admin/RTA/PM see filtered).
+- Where: Activity Grid in sidebar.
+- What: One date (and optional project, optional agent filter). For each user:
+  timeline of events (scheduled shift, scheduled breaks, clock-in, work, clock-out,
+  AUX, coaching, meeting) with duration. Flags: lateness (clock-in after scheduled
+  start), break_violation (AUX over allowed limit).
+
+
+11. REPORTING LINE AND TRANSFERS
+--------------------------------------------------------------------------------
+- Registration: Agent selects manager (required).
+- Transfer: Manager goes to Transfers -> Transfer agent: select agent (from my
+  team) and new manager. Submit. The manager above the requesting manager (or
+  admin) sees the request under "Pending my approval" and can Approve or Reject.
+  On Approve, the agent's direct manager is updated.
+
+
+12. PROJECTS AND PROJECT SESSIONS
+--------------------------------------------------------------------------------
+- Admin creates projects and assigns Project Managers and RTAs.
+- Agents: My Projects -> Log into project (one at a time per day). Log out when
+  done.
+- PM: Project Dashboard -> select project -> see agents and sessions for that project.
+- Schedules can be tied to a project (project_id). RTA sets schedules per project.
+
+
+13. HIERARCHY AND ORG VIEW
+--------------------------------------------------------------------------------
+- Hierarchy: Tree of reporting structure. Manager sees subtree under them;
+  Admin sees full tree. Each node shows name, role, email.
+- Org View: For any user, shows up to 3 managers above and colleagues (same
+  direct manager). Available to all roles.
+
+
+14. TIPS
+--------------------------------------------------------------------------------
+- Shifts can start/end any time (e.g. 14:00–22:00 or 22:00–06:00 next day).
+  Use the scheduler (RTA) or Schedule Management (admin) to set times.
+- Break config per project defines allowed break types and durations; actual
+  break times are set in the schedule (RTA or admin).
+- Coachings/meetings: Manager adds from Coachings & Meetings; RTA can add via
+  API for their project. They appear on the Activity Grid.
+- To create an RTA user: Admin -> All Users -> change user role to RTA (role
+  must exist in Roles). Then Projects -> Assign RTA for the desired project(s).
+
+================================================================================
+  End of guide
+================================================================================

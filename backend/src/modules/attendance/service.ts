@@ -21,23 +21,37 @@ async function getTodaySchedule(userId: string, now: Date): Promise<ScheduleRow 
   return rows[0] || null;
 }
 
-export async function clockIn(userId: string): Promise<Attendance> {
+export async function clockIn(userId: string, workLocation?: "WFH" | "WFO"): Promise<Attendance> {
   const now = new Date();
+  const todayStr = now.toISOString().slice(0, 10);
 
   const open = await getOpenAttendanceForUser(userId);
   if (open) {
-    throw new Error("You are already clocked in.");
+    const openDateStr = new Date(open.clock_in).toISOString().slice(0, 10);
+    if (openDateStr < todayStr) {
+      const endOfPrevDay = new Date(openDateStr + "T23:59:59.999Z");
+      const clockInTime = new Date(open.clock_in);
+      const workedSeconds = Math.max(0, Math.floor((endOfPrevDay.getTime() - clockInTime.getTime()) / 1000));
+      await closeAttendanceSession({
+        id: open.id,
+        clockOut: endOfPrevDay,
+        totalHours: `${workedSeconds} seconds`,
+        isEarlyLogout: true,
+        overtimeDuration: "0 seconds",
+      });
+    } else {
+      throw new Error("You are already clocked in.");
+    }
   }
 
   const schedule = await getTodaySchedule(userId, now);
   let isLate = false;
-
   if (schedule?.shift_start) {
     const shiftStart = new Date(schedule.shift_start);
     isLate = now > shiftStart;
   }
 
-  return createClockIn(userId, now, isLate);
+  return createClockIn(userId, now, isLate, workLocation);
 }
 
 export async function clockOut(userId: string): Promise<Attendance> {

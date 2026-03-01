@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useAuthStore } from "../../../lib/authStore";
 import { apiRequest, apiUpload } from "../../../lib/api";
 import { toast } from "../../../lib/toast";
+import { safeLabel, formatDateOnly } from "../../../lib/format";
 import EmptyState from "../../../components/ui/EmptyState";
 
 interface LeaveRequest {
@@ -135,7 +136,7 @@ export default function AgentRequestsPage() {
               >
                 {TYPES.map((t) => (
                   <option key={t} value={t}>
-                    {t.replace("_", " ")}
+                    {safeLabel(t)}
                   </option>
                 ))}
               </select>
@@ -239,7 +240,7 @@ export default function AgentRequestsPage() {
           <tbody>
             {list.map((r) => (
               <tr key={r.id} className="border-b border-slate-800">
-                <td className="p-2 capitalize">{r.type.replace("_", " ")}</td>
+                <td className="p-2 capitalize">{safeLabel(r.type)}</td>
                 <td className="p-2">{r.start_date}</td>
                 <td className="p-2">{r.end_date}</td>
                 <td className="p-2">
@@ -255,7 +256,7 @@ export default function AgentRequestsPage() {
                     {r.status}
                   </span>
                 </td>
-                <td className="p-2">{new Date(r.created_at).toLocaleDateString()}</td>
+                <td className="p-2">{formatDateOnly(r.created_at?.slice(0, 10))}</td>
               </tr>
             ))}
             {list.length === 0 && (

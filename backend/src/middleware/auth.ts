@@ -2,7 +2,7 @@ import { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
 import { env } from "../config/env";
 
-export type Role = "agent" | "manager" | "admin";
+export type Role = "agent" | "manager" | "admin" | "project_manager" | "rta";
 
 export interface AuthPayload {
   sub: string;

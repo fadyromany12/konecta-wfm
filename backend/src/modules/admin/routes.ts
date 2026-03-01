@@ -272,6 +272,113 @@ router.get("/export/overtime", async (req: AuthRequest, res) => {
   }
 });
 
+// Daily agents export: one row per user per day with Login, breaks, Logout, Tardy, Overtime, Leave Type, exceed flags, aux codes with time
+router.get("/export/daily", async (req: AuthRequest, res) => {
+  try {
+    const from = (req.query.from as string) || new Date().toISOString().slice(0, 10);
+    const to = (req.query.to as string) || new Date().toISOString().slice(0, 10);
+    const { rows: agents } = await query(`SELECT id, first_name, last_name FROM users WHERE role = 'agent' AND status = 'active' ORDER BY first_name, last_name`);
+    const { rows: attendance } = await query(
+      `SELECT a.user_id, a.shift_date, a.clock_in, a.clock_out, a.total_hours, a.is_late, a.is_early_logout, a.overtime_duration
+       FROM attendance a WHERE a.shift_date >= $1 AND a.shift_date <= $2`,
+      [from, to],
+    );
+    const { rows: schedules } = await query(
+      `SELECT user_id, date, shift_start, shift_end, break_1_start, break_1_end, break_2_start, break_2_end, break_3_start, break_3_end FROM schedules WHERE date >= $1 AND date <= $2`,
+      [from, to],
+    );
+    const { rows: auxLogs } = await query(
+      `SELECT user_id, aux_type, start_time, end_time, over_limit FROM auxlogs WHERE start_time::date >= $1 AND start_time::date <= $2 ORDER BY user_id, start_time`,
+      [from, to],
+    );
+    const { rows: leave } = await query(
+      `SELECT user_id, type, start_date, end_date FROM leave_requests WHERE status = 'approved' AND start_date <= $2 AND end_date >= $1`,
+      [from, to],
+    );
+    const header = "Date,User Name,Login,First Break In,First Break Out,Lunch In,Lunch Out,Last Break In,Last Break Out,Logout,Tardy (mins),Overtime (mins),Early Leave (mins),Leave Type,1st Break Exceed,Lunch Exceed,Last Break Exceed,NetLoginHours,PreShiftOvertime,PostShiftOvertime,OvernightEligible,TransportEligible,Aux Codes With Time";
+    const lines: string[] = [header];
+    const attByUserDate = new Map<string, any>();
+    attendance.forEach((a: any) => attByUserDate.set(`${a.user_id}:${a.shift_date}`, a));
+    const schedByUserDate = new Map<string, any>();
+    schedules.forEach((s: any) => schedByUserDate.set(`${s.user_id}:${s.date}`, s));
+    const auxByUserDate = new Map<string, any[]>();
+    auxLogs.forEach((a: any) => {
+      const d = (a.start_time as string).slice(0, 10);
+      const key = `${a.user_id}:${d}`;
+      if (!auxByUserDate.has(key)) auxByUserDate.set(key, []);
+      auxByUserDate.get(key)!.push(a);
+    });
+    const leaveByUserDate = new Map<string, string>();
+    leave.forEach((l: any) => {
+      const start = new Date(l.start_date).getTime();
+      const end = new Date(l.end_date).getTime();
+      for (let t = start; t <= end; t += 86400000) {
+        const d = new Date(t).toISOString().slice(0, 10);
+        if (d >= from && d <= to) leaveByUserDate.set(`${l.user_id}:${d}`, l.type || "leave");
+      }
+    });
+    const fromT = new Date(from).getTime();
+    const toT = new Date(to).getTime();
+    for (const u of agents as { id: string; first_name: string; last_name: string }[]) {
+      for (let t = fromT; t <= toT; t += 86400000) {
+        const dateStr = new Date(t).toISOString().slice(0, 10);
+        const att = attByUserDate.get(`${u.id}:${dateStr}`);
+        const sched = schedByUserDate.get(`${u.id}:${dateStr}`);
+        const auxList = auxByUserDate.get(`${u.id}:${dateStr}`) || [];
+        const leaveType = leaveByUserDate.get(`${u.id}:${dateStr}`) || (att ? "present" : "absent");
+        const firstBreak = auxList.find((a: any) => a.aux_type === "break");
+        const lunch = auxList.find((a: any) => a.aux_type === "lunch");
+        const lastBreak = auxList.find((a: any) => a.aux_type === "last_break");
+        const login = att?.clock_in ? new Date(att.clock_in).toISOString() : "";
+        const logout = att?.clock_out ? new Date(att.clock_out).toISOString() : "";
+        const tardyMins = att?.is_late && sched?.shift_start ? Math.max(0, Math.round((new Date(att.clock_in).getTime() - new Date(sched.shift_start).getTime()) / 60000)) : 0;
+        const overtimeMins = att?.overtime_duration ? Math.round((typeof att.overtime_duration === "string" ? parseInterval(att.overtime_duration) : 0) / 60) : 0;
+        const earlyMins = att?.is_early_logout && sched?.shift_end ? Math.max(0, Math.round((new Date(sched.shift_end).getTime() - new Date(att.clock_out).getTime()) / 60000)) : 0;
+        const netHours = att?.total_hours ? (typeof att.total_hours === "string" ? parseInterval(att.total_hours) : 0) / 3600 : 0;
+        const auxCodesWithTime = auxList.map((a: any) => `${a.aux_type} ${(a.start_time as string).slice(11, 16)}${a.end_time ? "-" + (a.end_time as string).slice(11, 16) : ""}`).join("; ");
+        const overnightEligible = sched?.shift_end && new Date(sched.shift_end).getUTCHours() >= 19 ? "Y" : "";
+        const transportEligible = att ? "Y" : "";
+        lines.push([
+          dateStr,
+          `${u.first_name} ${u.last_name}`,
+          login,
+          firstBreak?.start_time ? (firstBreak.start_time as string).slice(11, 19) : "",
+          firstBreak?.end_time ? (firstBreak.end_time as string).slice(11, 19) : "",
+          lunch?.start_time ? (lunch.start_time as string).slice(11, 19) : "",
+          lunch?.end_time ? (lunch.end_time as string).slice(11, 19) : "",
+          lastBreak?.start_time ? (lastBreak.start_time as string).slice(11, 19) : "",
+          lastBreak?.end_time ? (lastBreak.end_time as string).slice(11, 19) : "",
+          logout,
+          tardyMins,
+          overtimeMins,
+          earlyMins,
+          leaveType,
+          firstBreak?.over_limit ? "Y" : "",
+          lunch?.over_limit ? "Y" : "",
+          lastBreak?.over_limit ? "Y" : "",
+          netHours.toFixed(2),
+          "",
+          "",
+          overnightEligible,
+          transportEligible,
+          auxCodesWithTime,
+        ].map(String).map(escapeCsv).join(","));
+      }
+    }
+    res.setHeader("Content-Type", "text/csv");
+    res.setHeader("Content-Disposition", `attachment; filename=daily-agents-${from}-${to}.csv`);
+    return res.send(lines.join("\r\n"));
+  } catch (err: any) {
+    return res.status(400).json({ error: { message: err.message || "Export failed" } });
+  }
+});
+
+function parseInterval(s: string): number {
+  const m = s.match(/(\d+):(\d+):(\d+)/);
+  if (m) return parseInt(m[1], 10) * 3600 + parseInt(m[2], 10) * 60 + parseInt(m[3], 10);
+  return 0;
+}
+
 router.get("/schedules", async (req: AuthRequest, res) => {
   try {
     const from = req.query.from as string;
@@ -347,13 +454,21 @@ router.post("/schedules/import", upload.single("file"), async (req: AuthRequest,
 });
 
 router.put("/schedules", async (req: AuthRequest, res) => {
-  const { user_id, date, shift_start, shift_end, day_type } = req.body as {
+  const body = req.body as {
     user_id?: string;
     date?: string;
+    project_id?: string | null;
     shift_start?: string | null;
     shift_end?: string | null;
+    break_1_start?: string | null;
+    break_1_end?: string | null;
+    break_2_start?: string | null;
+    break_2_end?: string | null;
+    break_3_start?: string | null;
+    break_3_end?: string | null;
     day_type?: string;
   };
+  const { user_id, date, shift_start, shift_end, day_type } = body;
   if (!user_id || !date) {
     return res.status(400).json({ error: { message: "user_id and date required" } });
   }
@@ -361,8 +476,15 @@ router.put("/schedules", async (req: AuthRequest, res) => {
     const row = await upsertSchedule({
       userId: user_id,
       date,
+      projectId: body.project_id ?? null,
       shiftStart: shift_start ?? null,
       shiftEnd: shift_end ?? null,
+      break1Start: body.break_1_start ?? null,
+      break1End: body.break_1_end ?? null,
+      break2Start: body.break_2_start ?? null,
+      break2End: body.break_2_end ?? null,
+      break3Start: body.break_3_start ?? null,
+      break3End: body.break_3_end ?? null,
       dayType: day_type || "work",
     });
     return res.json(row);
@@ -371,40 +493,69 @@ router.put("/schedules", async (req: AuthRequest, res) => {
   }
 });
 
-// ——— Enterprise: Payroll export (worked hours, overtime, leave deductions) ———
+// ——— Enterprise: Payroll export (worked hours, overtime, leave, allowances) ———
 router.get("/payroll/export", async (req: AuthRequest, res) => {
   try {
     const from = (req.query.from as string) || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
     const to = (req.query.to as string) || new Date().toISOString().slice(0, 10);
     const { rows: attendanceRows } = await query(
       `SELECT u.id AS user_id, u.first_name, u.last_name, u.email,
+              COUNT(a.id) FILTER (WHERE a.clock_out IS NOT NULL) AS days_worked,
               SUM(EXTRACT(EPOCH FROM a.total_hours) / 3600) AS regular_hours,
               SUM(EXTRACT(EPOCH FROM a.overtime_duration) / 3600) AS overtime_hours
        FROM users u
-       LEFT JOIN attendance a ON a.user_id = u.id AND a.shift_date >= $1 AND a.shift_date <= $2 AND a.clock_out IS NOT NULL
+       LEFT JOIN attendance a ON a.user_id = u.id AND a.shift_date >= $1 AND a.shift_date <= $2
        WHERE u.role = 'agent'
        GROUP BY u.id, u.first_name, u.last_name, u.email`,
       [from, to],
     );
     const { rows: leaveRows } = await query(
-      `SELECT user_id, SUM((end_date - start_date + 1)) AS leave_days
-       FROM leave_requests WHERE status = 'approved' AND start_date <= $2 AND end_date >= $1 GROUP BY user_id`,
+      `SELECT user_id, type, SUM((end_date - start_date + 1)) AS days
+       FROM leave_requests WHERE status = 'approved' AND start_date <= $2 AND end_date >= $1 GROUP BY user_id, type`,
       [from, to],
     );
-    const leaveMap: Record<string, number> = {};
-    leaveRows.forEach((r: any) => (leaveMap[r.user_id] = Number(r.leave_days) || 0));
-    const csvHeader = "user_id,first_name,last_name,email,period_start,period_end,regular_hours,overtime_hours,leave_days";
-    const csvLines = attendanceRows.map((r: any) => [
-      r.user_id,
-      r.first_name,
-      r.last_name,
-      r.email,
-      from,
-      to,
-      (Number(r.regular_hours) || 0).toFixed(2),
-      (Number(r.overtime_hours) || 0).toFixed(2),
-      leaveMap[r.user_id] ?? 0,
-    ].map(String).map(escapeCsv).join(","));
+    const { rows: schedRows } = await query(
+      `SELECT user_id, COUNT(*) FILTER (WHERE day_type = 'off') AS days_off,
+              COUNT(*) FILTER (WHERE day_type = 'holiday') AS holiday_days
+       FROM schedules WHERE date >= $1 AND date <= $2 GROUP BY user_id`,
+      [from, to],
+    );
+    const leaveMap: Record<string, { total: number; sick: number }> = {};
+    leaveRows.forEach((r: any) => {
+      if (!leaveMap[r.user_id]) leaveMap[r.user_id] = { total: 0, sick: 0 };
+      leaveMap[r.user_id].total += Number(r.days) || 0;
+      if (String(r.type).toLowerCase().includes("sick")) leaveMap[r.user_id].sick += Number(r.days) || 0;
+    });
+    const schedMap: Record<string, { days_off: number; holiday: number }> = {};
+    schedRows.forEach((r: any) => { schedMap[r.user_id] = { days_off: Number(r.days_off) || 0, holiday: Number(r.holiday_days) || 0 }; });
+    const totalDays = Math.round((new Date(to).getTime() - new Date(from).getTime()) / 86400000) + 1;
+    const csvHeader = "user_id,first_name,last_name,email,period_start,period_end,days_worked,days_off,days_sick,regular_hours,overtime_hours,overtime_day_hours,overtime_night_hours,leave_days,cancel_day_offs,transportation_allowance_days,overnight_allowance_days";
+    const csvLines = attendanceRows.map((r: any) => {
+      const uid = r.user_id;
+      const worked = Number(r.days_worked) || 0;
+      const off = schedMap[uid]?.days_off ?? 0;
+      const sick = leaveMap[uid]?.sick ?? 0;
+      const leaveDays = leaveMap[uid]?.total ?? 0;
+      return [
+        uid,
+        r.first_name,
+        r.last_name,
+        r.email,
+        from,
+        to,
+        worked,
+        off,
+        sick,
+        (Number(r.regular_hours) || 0).toFixed(2),
+        (Number(r.overtime_hours) || 0).toFixed(2),
+        (Number(r.overtime_hours) || 0).toFixed(2),
+        "0",
+        leaveDays,
+        0,
+        worked,
+        worked,
+      ].map(String).map(escapeCsv).join(",");
+    });
     res.setHeader("Content-Type", "text/csv");
     res.setHeader("Content-Disposition", `attachment; filename=payroll-${from}-${to}.csv`);
     return res.send([csvHeader, ...csvLines].join("\r\n"));

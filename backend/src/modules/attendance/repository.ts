@@ -19,16 +19,20 @@ export async function getOpenAttendanceForUser(userId: string): Promise<Attendan
   return rows[0] || null;
 }
 
-export async function createClockIn(userId: string, clockIn: Date, isLate: boolean): Promise<Attendance> {
+export async function createClockIn(userId: string, clockIn: Date, isLate: boolean, workLocation?: string): Promise<Attendance> {
   const { rows } = await query<Attendance>(
-    `
-      INSERT INTO attendance (user_id, clock_in, is_late)
-      VALUES ($1, $2, $3)
-      RETURNING *
-    `,
+    `INSERT INTO attendance (user_id, clock_in, is_late) VALUES ($1, $2, $3) RETURNING *`,
     [userId, clockIn.toISOString(), isLate],
   );
-  return rows[0];
+  const row = rows[0];
+  if (row && (workLocation === "WFH" || workLocation === "WFO")) {
+    try {
+      await query(`UPDATE attendance SET work_location = $2 WHERE id = $1`, [row.id, workLocation]);
+    } catch {
+      // column may not exist yet; run migrations_wfh_wfo.sql
+    }
+  }
+  return row;
 }
 
 export async function closeAttendanceSession(params: {

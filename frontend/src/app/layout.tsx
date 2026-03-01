@@ -1,38 +1,54 @@
 "use client";
 
 import "./globals.css";
-import { ReactNode, useEffect } from "react";
+import { ReactNode, useEffect, useRef } from "react";
 import { usePathname } from "next/navigation";
 import { Toaster } from "sonner";
 import { useAuthStore } from "../lib/authStore";
+import { useThemeStore } from "../lib/themeStore";
 import Sidebar from "../components/Sidebar";
 import ThemeToggle from "../components/ThemeToggle";
 import NotificationsDropdown from "../components/NotificationsDropdown";
 
+const AUTH_PAGES = new Set(["/login", "/register", "/forgot-password", "/reset-password", "/verify-email", "/pending"]);
+
 export default function RootLayout({ children }: { children: ReactNode }) {
   const pathname = usePathname();
+  const hydrated = useRef(false);
   const hydrate = useAuthStore((s) => s.hydrate);
   const user = useAuthStore((s) => s.user);
+  const theme = useThemeStore((s) => s.theme);
+  const themeHydrate = useThemeStore((s) => s.hydrate);
 
   useEffect(() => {
+    if (hydrated.current) return;
+    hydrated.current = true;
     hydrate();
-  }, [hydrate]);
+    themeHydrate();
+  }, [hydrate, themeHydrate]);
 
-  const isAuthPage = ["/login", "/register", "/forgot-password", "/reset-password", "/verify-email", "/pending"].includes(pathname);
+  const isAuthPage = AUTH_PAGES.has(pathname);
   const showSidebar = user && !isAuthPage;
 
   return (
-    <html lang="en" className="dark" suppressHydrationWarning>
-      <body className="min-h-screen bg-app text-slate-100 antialiased">
+    <html lang="en" suppressHydrationWarning>
+      <head>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `(function(){var t=localStorage.getItem("konecta-theme");document.documentElement.classList.toggle("dark",t!=="light");})();`,
+          }}
+        />
+      </head>
+      <body className="min-h-screen antialiased">
         <div className="flex min-h-screen">
           {showSidebar && (
             <aside className="hidden shrink-0 md:block">
               <Sidebar />
             </aside>
           )}
-          <main className="flex flex-1 flex-col">
+          <main className="flex min-h-screen flex-1 flex-col">
             {showSidebar && (
-              <header className="flex items-center justify-end gap-3 border-b border-slate-800/80 bg-slate-900/40 px-4 py-3 backdrop-blur-sm">
+              <header className="flex items-center justify-end gap-3 border-b border-[var(--border-sidebar)] bg-[var(--bg-sidebar)] px-4 py-3 backdrop-blur-sm">
                 <NotificationsDropdown />
                 <ThemeToggle />
               </header>
@@ -42,7 +58,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
             </div>
           </main>
         </div>
-        <Toaster position="top-right" richColors closeButton theme="dark" />
+        <Toaster position="top-right" richColors closeButton theme={theme} />
       </body>
     </html>
   );

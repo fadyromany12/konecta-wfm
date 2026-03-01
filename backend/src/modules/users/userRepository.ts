@@ -1,6 +1,6 @@
 import { query } from "../../db/pool";
 
-export type UserRole = "agent" | "manager" | "admin";
+export type UserRole = "agent" | "manager" | "admin" | "project_manager" | "rta";
 
 export interface User {
   id: string;

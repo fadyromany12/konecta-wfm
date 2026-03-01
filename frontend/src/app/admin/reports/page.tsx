@@ -44,12 +44,12 @@ export default function AdminReportsPage() {
     else if (user.role !== "admin") router.replace("/");
   }, [user, router]);
 
-  async function handleExport(type: "attendance" | "leave" | "aux" | "overtime" | "payroll") {
+  async function handleExport(type: "attendance" | "leave" | "aux" | "overtime" | "payroll" | "daily") {
     if (!token) return;
     setError(null);
     setLoading(type);
     try {
-      const path = type === "payroll" ? "/admin/payroll/export" : `/admin/export/${type}`;
+      const path = type === "payroll" ? "/admin/payroll/export" : type === "daily" ? "/admin/export/daily" : `/admin/export/${type}`;
       await downloadExport(path, `${type}-${from}-${to}.csv`, token, { from, to });
       toast.success("Download started");
     } catch (e) {
@@ -138,6 +138,14 @@ export default function AdminReportsPage() {
             className="btn-outline"
           >
             {loading === "overtime" ? "Downloading…" : "Overtime CSV"}
+          </button>
+          <button
+            type="button"
+            onClick={() => handleExport("daily")}
+            disabled={!!loading}
+            className="btn-outline"
+          >
+            {loading === "daily" ? "Downloading…" : "Daily Agents (Login, Breaks, Aux, Violations)"}
           </button>
           <button
             type="button"

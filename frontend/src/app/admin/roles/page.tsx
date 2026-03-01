@@ -32,6 +32,10 @@ export default function AdminRolesPage() {
   const [newName, setNewName] = useState("");
   const [newDesc, setNewDesc] = useState("");
   const [newPermIds, setNewPermIds] = useState<string[]>([]);
+  const [editingRole, setEditingRole] = useState<Role | null>(null);
+  const [editName, setEditName] = useState("");
+  const [editDesc, setEditDesc] = useState("");
+  const [editPermIds, setEditPermIds] = useState<string[]>([]);
 
   useEffect(() => {
     if (!user || !token) {
@@ -121,6 +125,7 @@ export default function AdminRolesPage() {
                 <th className="p-2">Role</th>
                 <th className="p-2">Description</th>
                 <th className="p-2">Permissions</th>
+                <th className="p-2">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -131,10 +136,59 @@ export default function AdminRolesPage() {
                   <td className="p-2 text-slate-300">
                     {(rolePermissions[r.id] || []).length} permission(s)
                   </td>
+                  <td className="p-2">
+                    <button type="button" onClick={() => { setEditingRole(r); setEditName(r.name); setEditDesc(r.description || ""); setEditPermIds(rolePermissions[r.id] || []); }} className="text-brand-light hover:underline">
+                      Edit permissions
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {editingRole && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setEditingRole(null)}>
+          <div className="card max-w-lg w-full border-2 border-slate-600 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-lg font-semibold text-slate-100">Edit role: {editingRole.name}</h3>
+            <div className="mt-4 space-y-3">
+              <div>
+                <label className="mb-1 block text-sm text-slate-400">Name</label>
+                <input type="text" value={editName} onChange={(e) => setEditName(e.target.value)} className="input-field w-full" />
+              </div>
+              <div>
+                <label className="mb-1 block text-sm text-slate-400">Description</label>
+                <input type="text" value={editDesc} onChange={(e) => setEditDesc(e.target.value)} className="input-field w-full" />
+              </div>
+              <div>
+                <label className="mb-2 block text-sm text-slate-400">Permissions</label>
+                <div className="max-h-48 overflow-y-auto rounded border border-slate-700 bg-slate-800/50 p-2">
+                  {Object.entries(byCategory).map(([cat, perms]) => (
+                    <div key={cat} className="mb-2">
+                      <p className="text-xs font-medium text-slate-500">{cat}</p>
+                      {perms.map((p) => (
+                        <label key={p.id} className="mt-1 flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            checked={editPermIds.includes(p.id)}
+                            onChange={(e) => setEditPermIds((prev) => (e.target.checked ? [...prev, p.id] : prev.filter((id) => id !== p.id)))}
+                          />
+                          <span className="text-slate-300">{p.label}</span>
+                        </label>
+                      ))}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+            <div className="mt-4 flex gap-2">
+              <button type="button" onClick={() => updateRole(editingRole.id, editName, editDesc || null, editPermIds)} className="btn-primary">
+                Save
+              </button>
+              <button type="button" onClick={() => setEditingRole(null)} className="btn-outline">Cancel</button>
+            </div>
+          </div>
         </div>
       )}
 

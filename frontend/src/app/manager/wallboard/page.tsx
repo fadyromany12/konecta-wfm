@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuthStore } from "../../../lib/authStore";
 import { apiRequest } from "../../../lib/api";
+import { safeLabel } from "../../../lib/format";
 import { Users, Coffee, AlertCircle, Clock } from "lucide-react";
 
 interface WallboardAgent {
@@ -131,10 +132,10 @@ export default function ManagerWallboardPage() {
                     </td>
                     <td className="p-3">
                       <span className={`inline-flex rounded-lg border px-2 py-0.5 text-xs font-medium ${statusColor(a.status)}`}>
-                        {a.status === "aux" && a.current_aux ? a.current_aux.replace("_", " ") : a.status === "available" ? "Available" : a.status === "off" ? "Off" : "Clocked out"}
+                        {a.status === "aux" && a.current_aux ? safeLabel(a.current_aux) : a.status === "available" ? "Available" : a.status === "off" ? "Off" : "Clocked out"}
                       </span>
                     </td>
-                    <td className="p-3 text-slate-300">{a.current_aux ? a.current_aux.replace("_", " ") : "—"}</td>
+                    <td className="p-3 text-slate-300">{a.current_aux ? safeLabel(a.current_aux) : "—"}</td>
                     <td className="p-3">{a.is_late ? <span className="text-red-400">Yes</span> : "—"}</td>
                   </tr>
                 ))}

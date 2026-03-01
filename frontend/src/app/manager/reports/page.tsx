@@ -1,29 +1,100 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuthStore } from "../../../lib/authStore";
+import { downloadExport } from "../../../lib/api";
+import { toast } from "../../../lib/toast";
 import Link from "next/link";
+
+const today = new Date();
+const yyyy = (d: Date) => d.toISOString().slice(0, 10);
+const defaultFrom = yyyy(new Date(today.getTime() - 30 * 86400000));
+const defaultTo = yyyy(today);
+const presets = [
+  { label: "Today", from: yyyy(today), to: yyyy(today) },
+  { label: "This week", from: yyyy(new Date(today.getTime() - 7 * 86400000)), to: yyyy(today) },
+  { label: "This month", from: yyyy(new Date(today.getFullYear(), today.getMonth(), 1)), to: yyyy(today) },
+  { label: "Last 30 days", from: defaultFrom, to: defaultTo },
+];
 
 export default function ManagerReportsPage() {
   const router = useRouter();
   const user = useAuthStore((s) => s.user);
+  const token = useAuthStore((s) => s.token);
+  const [from, setFrom] = useState(defaultFrom);
+  const [to, setTo] = useState(defaultTo);
+  const [loading, setLoading] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!user) router.replace("/login");
     else if (user.role !== "manager") router.replace("/");
   }, [user, router]);
 
+  async function handleExport(type: "attendance" | "leave" | "aux") {
+    if (!token) return;
+    setError(null);
+    setLoading(type);
+    try {
+      await downloadExport(`/manager/export/${type}`, `team-${type}-${from}-${to}.csv`, token, { from, to });
+      toast.success("Download started");
+    } catch (e) {
+      const msg = (e as Error).message || "Export failed";
+      setError(msg);
+      toast.error(msg);
+    } finally {
+      setLoading(null);
+    }
+  }
+
   if (!user) return null;
 
   return (
-    <div className="space-y-6">
-      <h1 className="text-2xl font-semibold text-slate-50">Reports</h1>
+    <div className="space-y-8">
+      <div>
+        <h1 className="page-title">Reports</h1>
+        <p className="page-subtitle">Pull CSV reports for your team (attendance, leave, AUX)</p>
+      </div>
+      <div className="card space-y-6 transition-shadow duration-300 hover:shadow-xl">
+        <div className="flex flex-wrap items-end gap-4">
+          <div>
+            <label className="mb-1 block text-sm font-medium text-slate-400">From</label>
+            <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="input-field" />
+          </div>
+          <div>
+            <label className="mb-1 block text-sm font-medium text-slate-400">To</label>
+            <input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="input-field" />
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {presets.map((p) => (
+              <button
+                key={p.label}
+                type="button"
+                onClick={() => { setFrom(p.from); setTo(p.to); }}
+                className="rounded-lg border border-slate-600 bg-slate-800/50 px-3 py-1.5 text-xs font-medium text-slate-300 transition-colors hover:bg-slate-700 hover:text-white"
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        {error && <p className="text-sm text-red-400">{error}</p>}
+        <div className="flex flex-wrap gap-3">
+          <button type="button" onClick={() => handleExport("attendance")} disabled={!!loading} className="btn-primary">
+            {loading === "attendance" ? "Downloading…" : "Team attendance CSV"}
+          </button>
+          <button type="button" onClick={() => handleExport("leave")} disabled={!!loading} className="btn-outline">
+            {loading === "leave" ? "Downloading…" : "Team leave CSV"}
+          </button>
+          <button type="button" onClick={() => handleExport("aux")} disabled={!!loading} className="btn-outline">
+            {loading === "aux" ? "Downloading…" : "Team AUX CSV"}
+          </button>
+        </div>
+      </div>
       <div className="card max-w-md">
-        <p className="text-slate-400">
-          Team attendance and performance reports. Use the Team Dashboard for daily attendance and Approvals for pending requests.
-        </p>
-        <Link href="/manager/dashboard" className="mt-4 inline-block text-violet-400 hover:underline">
+        <p className="text-slate-400">For daily breakdown and payroll exports, use the admin Reports page if you have access.</p>
+        <Link href="/manager/dashboard" className="mt-4 inline-block text-[var(--color-brand-light)] hover:underline">
           → Team Dashboard
         </Link>
       </div>

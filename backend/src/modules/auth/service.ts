@@ -53,7 +53,8 @@ export function generateJwtToken(user: User): string {
     sub: user.id,
     role: user.role,
   };
-  const expiresInSeconds = Number(env.jwtExpiresIn) || 3600;
+  // Default 7 days so users are not kicked to login during normal use
+  const expiresInSeconds = Number(env.jwtExpiresIn) || 604800;
   return jwt.sign(payload, env.jwtSecret, {
     expiresIn: expiresInSeconds,
   });

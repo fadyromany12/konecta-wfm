@@ -51,15 +51,23 @@ export async function createLeave(input: CreateLeaveInput): Promise<LeaveRequest
   return rows[0];
 }
 
+function toDateOnly(v: string | Date | null | undefined): string {
+  if (v == null) return "";
+  const s = typeof v === "string" ? v : (v as Date).toISOString?.() ?? String(v);
+  return s.slice(0, 10);
+}
+
 export async function getLeaveByUser(userId: string): Promise<LeaveRequest[]> {
   const { rows } = await query<LeaveRequest>(
     `SELECT * FROM leave_requests WHERE user_id = $1 ORDER BY created_at DESC`,
     [userId],
   );
-  return rows;
+  return rows.map((r) => ({ ...r, start_date: toDateOnly(r.start_date), end_date: toDateOnly(r.end_date) }));
 }
 
 export async function getLeaveById(id: string): Promise<LeaveRequest | null> {
   const { rows } = await query<LeaveRequest>(`SELECT * FROM leave_requests WHERE id = $1`, [id]);
-  return rows[0] || null;
+  const r = rows[0];
+  if (!r) return null;
+  return { ...r, start_date: toDateOnly(r.start_date), end_date: toDateOnly(r.end_date) };
 }

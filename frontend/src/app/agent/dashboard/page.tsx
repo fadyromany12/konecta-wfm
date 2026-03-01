@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useAuthStore } from "../../../lib/authStore";
 import { apiRequest } from "../../../lib/api";
 import { toast } from "../../../lib/toast";
+import { formatTotalHours, safeLabel } from "../../../lib/format";
 import AnnouncementsWidget from "../../../components/AnnouncementsWidget";
 import { Clock, Activity, Calendar, Zap } from "lucide-react";
 
@@ -12,10 +13,10 @@ interface Attendance {
   id: string;
   clock_in: string;
   clock_out: string | null;
-  total_hours: string | null;
+  total_hours?: string | number | null;
   is_late: boolean;
   is_early_logout: boolean;
-  overtime_duration: string | null;
+  overtime_duration?: string | null;
 }
 
 type AuxType =
@@ -47,6 +48,9 @@ export default function AgentDashboardPage() {
   const [auxLoading, setAuxLoading] = useState(false);
   const [attendance, setAttendance] = useState<Attendance[]>([]);
   const [auxHistory, setAuxHistory] = useState<AuxLog[]>([]);
+  const [projects, setProjects] = useState<{ id: string; name: string }[]>([]);
+  const [selectedProjectId, setSelectedProjectId] = useState("");
+  const [workLocation, setWorkLocation] = useState<"WFO" | "WFH">("WFO");
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -56,6 +60,7 @@ export default function AgentDashboardPage() {
       router.replace("/");
     } else {
       void refreshData();
+      apiRequest<{ id: string; name: string }[]>("/project-sessions/projects", {}, token).then(setProjects).catch(() => setProjects([]));
     }
   }, [router, user, token]);
 
@@ -75,10 +80,25 @@ export default function AgentDashboardPage() {
 
   async function handleClock(action: "clock-in" | "clock-out") {
     if (!token) return;
+    if (action === "clock-in" && projects.length > 0 && !selectedProjectId) {
+      toast.error("Select a project before clocking in");
+      return;
+    }
     setClockLoading(true);
     setError(null);
     try {
-      await apiRequest(`/attendance/${action}`, { method: "POST" }, token);
+      const body = action === "clock-in" && (user?.role === "manager" || user?.role === "admin") ? { work_location: workLocation } : undefined;
+      await apiRequest(`/attendance/${action}`, { method: "POST", ...(body ? { body: JSON.stringify(body) } : {}) }, token);
+      if (action === "clock-in" && selectedProjectId) {
+        try {
+          await apiRequest("/project-sessions/clock-in", { method: "POST", body: JSON.stringify({ projectId: selectedProjectId }) }, token);
+        } catch { /* optional */ }
+      }
+      if (action === "clock-out") {
+        try {
+          await apiRequest("/project-sessions/clock-out", { method: "POST", body: JSON.stringify({}) }, token);
+        } catch { /* optional */ }
+      }
       await refreshData();
       toast.success(action === "clock-in" ? "Clocked in" : "Clocked out");
     } catch (err: any) {
@@ -175,7 +195,7 @@ export default function AgentDashboardPage() {
             </div>
             <div>
               <p className="text-xs font-medium uppercase tracking-wider text-slate-500">AUX</p>
-              <p className="font-semibold text-white">{openAux ? openAux.aux_type.replace("_", " ") : "Available"}</p>
+              <p className="font-semibold text-white">{openAux ? safeLabel(openAux.aux_type) : "Available"}</p>
             </div>
           </div>
         </div>
@@ -208,8 +228,19 @@ export default function AgentDashboardPage() {
       <div className="grid gap-5 md:grid-cols-3">
         <div className="card transition-shadow duration-300 hover:shadow-xl">
           <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-slate-400">Time Tracking</h2>
+          {projects.length > 0 && (
+            <div className="mb-3">
+              <label className="mb-1 block text-xs text-slate-400">Project (choose before clock in)</label>
+              <select value={selectedProjectId} onChange={(e) => setSelectedProjectId(e.target.value)} className="input-field w-full text-sm">
+                <option value="">Select project…</option>
+                {projects.map((p) => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
           {openAttendance && (
-            <p className="mb-2 text-lg font-mono font-medium text-violet-300">
+            <p className="mb-2 animate-pulse text-lg font-mono font-medium text-violet-300 transition-all">
               Live: {formatLive(liveSeconds)}
             </p>
           )}
@@ -219,10 +250,23 @@ export default function AgentDashboardPage() {
               {openAttendance ? "Clocked in" : "Clocked out"}
             </span>
           </p>
+          {(user?.role === "manager" || user?.role === "admin") && (
+            <div className="mb-3">
+              <label className="mb-1 block text-xs text-slate-400">Work location</label>
+              <select
+                value={workLocation}
+                onChange={(e) => setWorkLocation(e.target.value as "WFO" | "WFH")}
+                className="input-field w-full max-w-[140px]"
+              >
+                <option value="WFO">WFO (Office)</option>
+                <option value="WFH">WFH (Home)</option>
+              </select>
+            </div>
+          )}
           <div className="flex gap-2">
             <button
               className="btn-primary flex-1"
-              disabled={clockLoading || !!openAttendance}
+              disabled={clockLoading || !!openAttendance || (projects.length > 0 && !selectedProjectId)}
               onClick={() => handleClock("clock-in")}
             >
               Clock In
@@ -238,11 +282,11 @@ export default function AgentDashboardPage() {
         </div>
 
         <div className="card transition-shadow duration-300 hover:shadow-xl md:col-span-2">
-          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-slate-400">AUX Status</h2>
+          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-slate-400">AUX Status & Recent</h2>
           <p className="mb-2 text-xs text-slate-400">
             Current:{" "}
-            <span className="font-medium text-slate-100">
-              {openAux ? openAux.aux_type : "Available"}
+            <span className={`font-medium ${openAux ? "rounded px-2 py-0.5 " + (openAux.aux_type === "break" || openAux.aux_type === "lunch" ? "bg-amber-500/20 text-amber-400" : openAux.aux_type === "available" ? "bg-emerald-500/20 text-emerald-400" : "bg-slate-600 text-slate-200") : "text-slate-100"}`}>
+              {openAux ? safeLabel(openAux.aux_type) : "Available"}
             </span>
           </p>
           <div className="flex flex-wrap gap-2">
@@ -262,7 +306,7 @@ export default function AgentDashboardPage() {
                 disabled={auxLoading}
                 onClick={() => handleAux(type as AuxType)}
               >
-                {type.replace("_", " ")}
+                {safeLabel(type)}
               </button>
             ))}
             <button
@@ -306,7 +350,7 @@ export default function AgentDashboardPage() {
                       {a.clock_out ? new Date(a.clock_out).toLocaleString() : "-"}
                     </td>
                     <td className="py-1">
-                      {a.total_hours ? a.total_hours.replace("00:", "") : "-"}
+                      {formatTotalHours(a.total_hours ?? null)}
                     </td>
                     <td className="py-1">{a.is_late ? "Yes" : "No"}</td>
                   </tr>
@@ -326,39 +370,18 @@ export default function AgentDashboardPage() {
         <div className="card transition-shadow duration-300 hover:shadow-xl">
           <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-slate-400">Recent AUX</h2>
           <div className="max-h-64 overflow-auto text-xs">
-            <table className="w-full border-collapse">
-              <thead>
-                <tr className="border-b border-slate-800 text-slate-400">
-                  <th className="py-2 text-left">Type</th>
-                  <th className="py-2 text-left">Start</th>
-                  <th className="py-2 text-left">End</th>
-                  <th className="py-2 text-left">Over limit</th>
-                </tr>
-              </thead>
-              <tbody>
-                {auxHistory.map((a) => (
-                  <tr key={a.id} className="border-b border-slate-900">
-                    <td className="py-1 capitalize">
-                      {a.aux_type.replace("_", " ")}
-                    </td>
-                    <td className="py-1">
-                      {new Date(a.start_time).toLocaleString()}
-                    </td>
-                    <td className="py-1">
-                      {a.end_time ? new Date(a.end_time).toLocaleString() : "-"}
-                    </td>
-                    <td className="py-1">{a.over_limit ? "Yes" : "No"}</td>
-                  </tr>
-                ))}
-                {auxHistory.length === 0 && (
-                  <tr>
-                    <td colSpan={4} className="py-2 text-slate-500">
-                      No records yet.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
+            {auxHistory.slice(0, 20).map((a) => {
+              const colors: Record<string, string> = { break: "bg-amber-500/20 text-amber-400 border-amber-500/40", lunch: "bg-orange-500/20 text-orange-400 border-orange-500/40", last_break: "bg-amber-600/20 text-amber-500 border-amber-600/40", meeting: "bg-blue-500/20 text-blue-400 border-blue-500/40", coaching: "bg-violet-500/20 text-violet-400 border-violet-500/40", training: "bg-cyan-500/20 text-cyan-400 border-cyan-500/40", technical_issue: "bg-red-500/20 text-red-400 border-red-500/40", floor_support: "bg-slate-500/20 text-slate-300 border-slate-500/40", available: "bg-emerald-500/20 text-emerald-400 border-emerald-500/40" };
+              const cls = colors[a.aux_type] || "bg-slate-600/20 text-slate-300 border-slate-600/40";
+              return (
+                <div key={a.id} className={`mb-2 flex items-center justify-between rounded-lg border px-3 py-2 transition-colors ${cls}`}>
+                  <span className="font-medium capitalize">{safeLabel(a.aux_type)}</span>
+                  <span>{new Date(a.start_time).toLocaleTimeString()}{a.end_time ? ` – ${new Date(a.end_time).toLocaleTimeString()}` : " (active)"}</span>
+                  {a.over_limit && <span className="text-red-400">Over</span>}
+                </div>
+              );
+            })}
+            {auxHistory.length === 0 && <p className="py-2 text-slate-500">No AUX records yet.</p>}
           </div>
         </div>
       </div>

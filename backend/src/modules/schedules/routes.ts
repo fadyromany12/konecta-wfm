@@ -4,7 +4,7 @@ import { getScheduleByUser } from "./repository";
 
 const router = Router();
 
-router.use(authenticateJWT, requireRole(["agent", "manager", "admin"]));
+router.use(authenticateJWT, requireRole(["agent", "manager", "admin", "project_manager", "rta"]));
 
 router.get("/me", async (req: AuthRequest, res) => {
   const { from, to } = req.query as { from?: string; to?: string };
