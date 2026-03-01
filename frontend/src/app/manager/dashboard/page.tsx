@@ -3,10 +3,12 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { motion } from "framer-motion";
 import { useAuthStore } from "../../../lib/authStore";
 import { apiRequest } from "../../../lib/api";
 import { toast } from "../../../lib/toast";
 import { formatTotalHours, safeLabel } from "../../../lib/format";
+import { FadeInStagger, FadeInItem } from "../../../components/ui/AnimatedWrapper";
 
 interface TeamRow {
   user_id: string;
@@ -144,32 +146,57 @@ export default function ManagerDashboardPage() {
         <h1 className="page-title">Team Dashboard</h1>
         <p className="page-subtitle">Attendance and activity for {date}</p>
       </div>
-      <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
-        <div className="card transition-all duration-300 hover:border-brand/30 hover:shadow-lg">
-          <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Team size</p>
-          <p className="mt-2 text-2xl font-bold text-white">{team.length}</p>
-        </div>
-        <div className="card transition-all duration-300 hover:border-brand/30 hover:shadow-lg">
-          <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Clocked in today</p>
-          <p className="mt-2 text-2xl font-bold text-brand-light">{clockedIn}</p>
-        </div>
-        <div className="card transition-all duration-300 hover:border-brand/30 hover:shadow-lg">
-          <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Late today</p>
-          <p className="mt-2 text-2xl font-bold text-amber-400">
-            {team.filter((t) => t.is_late).length}
-          </p>
-        </div>
-        <Link
-          href="/manager/approvals"
-          className="card-hover block"
-        >
-          <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Pending approvals</p>
-          <p className="mt-2 text-2xl font-bold text-white">
-            {pendingLeave + pendingSwaps} <span className="text-sm font-normal text-slate-400">total</span>
-          </p>
-          <p className="mt-1 text-xs text-slate-400">Leave: {pendingLeave} · Swaps: {pendingSwaps}</p>
-        </Link>
-      </div>
+      <FadeInStagger className="grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
+        <FadeInItem>
+          <motion.div
+            className="card transition-all duration-300 hover:border-brand/30 hover:shadow-lg"
+            whileHover={{ y: -4, scale: 1.01 }}
+            transition={{ type: "tween", duration: 0.2, ease: [0.32, 0.72, 0, 1] }}
+          >
+            <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Team size</p>
+            <p className="mt-2 text-2xl font-bold text-white">{team.length}</p>
+          </motion.div>
+        </FadeInItem>
+        <FadeInItem>
+          <motion.div
+            className="card transition-all duration-300 hover:border-brand/30 hover:shadow-lg"
+            whileHover={{ y: -4, scale: 1.01 }}
+            transition={{ type: "tween", duration: 0.2, ease: [0.32, 0.72, 0, 1] }}
+          >
+            <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Clocked in today</p>
+            <p className="mt-2 text-2xl font-bold text-brand-light">{clockedIn}</p>
+          </motion.div>
+        </FadeInItem>
+        <FadeInItem>
+          <motion.div
+            className="card transition-all duration-300 hover:border-brand/30 hover:shadow-lg"
+            whileHover={{ y: -4, scale: 1.01 }}
+            transition={{ type: "tween", duration: 0.2, ease: [0.32, 0.72, 0, 1] }}
+          >
+            <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Late today</p>
+            <p className="mt-2 text-2xl font-bold text-amber-400">
+              {team.filter((t) => t.is_late).length}
+            </p>
+          </motion.div>
+        </FadeInItem>
+        <FadeInItem>
+          <motion.div
+            whileHover={{ y: -4, scale: 1.01 }}
+            transition={{ type: "tween", duration: 0.2, ease: [0.32, 0.72, 0, 1] }}
+          >
+            <Link
+              href="/manager/approvals"
+              className="card-hover block"
+            >
+              <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Pending approvals</p>
+              <p className="mt-2 text-2xl font-bold text-white">
+                {pendingLeave + pendingSwaps} <span className="text-sm font-normal text-slate-400">total</span>
+              </p>
+              <p className="mt-1 text-xs text-slate-400">Leave: {pendingLeave} · Swaps: {pendingSwaps}</p>
+            </Link>
+          </motion.div>
+        </FadeInItem>
+      </FadeInStagger>
 
       {/* Live AUX today: who is on which AUX right now and since when */}
       <div className="card">

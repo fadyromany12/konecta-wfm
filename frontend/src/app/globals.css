@@ -23,23 +23,24 @@
   --shadow-brand: 0 10px 40px -10px rgba(91, 33, 182, 0.25);
 }
 
-/* Konecta dark mode */
+/* Konecta dark mode – S-tier rich slate + violet accent */
 .dark {
-  --bg-app: #0f172a;
-  --bg-app-gradient: radial-gradient(ellipse 80% 50% at 50% -20%, rgba(124, 58, 237, 0.18), transparent),
-    linear-gradient(to bottom, #0f172a, #020617);
-  --bg-sidebar: rgba(15, 23, 42, 0.94);
-  --bg-sidebar-footer: rgba(2, 6, 23, 0.8);
-  --bg-card: rgba(30, 41, 59, 0.85);
-  --bg-card-hover: rgba(51, 65, 85, 0.9);
-  --border-sidebar: rgba(248, 250, 252, 0.08);
-  --border-card: rgba(248, 250, 252, 0.1);
-  --border-input: rgba(248, 250, 252, 0.15);
-  --text-primary: #f8fafc;
-  --text-secondary: #cbd5e1;
-  --text-muted: #94a3b8;
-  --shadow-card: 0 4px 24px -4px rgba(0, 0, 0, 0.4);
-  --shadow-brand: 0 10px 40px -10px rgba(124, 58, 237, 0.35);
+  --bg-app: #09090b;
+  --bg-app-gradient: radial-gradient(ellipse 100% 80% at 50% -30%, rgba(124, 58, 237, 0.12), transparent 55%),
+    radial-gradient(ellipse 60% 40% at 80% 0%, rgba(124, 58, 237, 0.06), transparent 50%),
+    linear-gradient(180deg, #09090b 0%, #0a0a0f 50%, #09090b 100%);
+  --bg-sidebar: rgba(9, 9, 11, 0.85);
+  --bg-sidebar-footer: rgba(3, 3, 5, 0.9);
+  --bg-card: rgba(255, 255, 255, 0.04);
+  --bg-card-hover: rgba(255, 255, 255, 0.06);
+  --border-sidebar: rgba(255, 255, 255, 0.08);
+  --border-card: rgba(255, 255, 255, 0.1);
+  --border-input: rgba(255, 255, 255, 0.12);
+  --text-primary: #fafafa;
+  --text-secondary: #a1a1aa;
+  --text-muted: #71717a;
+  --shadow-card: 0 4px 24px -4px rgba(0, 0, 0, 0.5);
+  --shadow-brand: 0 0 20px rgba(124, 58, 237, 0.15), 0 10px 40px -10px rgba(124, 58, 237, 0.25);
 }
 
 body {
@@ -84,18 +85,43 @@ body {
 .stagger-6 { animation-delay: 300ms; }
 .ease-out { animation-timing-function: ease-out; }
 
-/* Cards – theme-aware */
+/* Cards – theme-aware glassmorphism */
 .card {
   background: var(--bg-card);
   border: 1px solid var(--border-card);
   border-radius: 1rem;
   padding: 1.5rem;
   box-shadow: var(--shadow-card);
-  backdrop-filter: blur(12px);
-  transition: border-color 0.25s ease, box-shadow 0.25s ease, transform 0.2s ease;
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  transition: border-color 0.25s cubic-bezier(0.32, 0.72, 0, 1), box-shadow 0.25s cubic-bezier(0.32, 0.72, 0, 1), transform 0.2s cubic-bezier(0.32, 0.72, 0, 1);
+}
+.dark .card {
+  background: rgba(15, 15, 18, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
 }
 .card:hover {
-  border-color: rgb(var(--color-brand) / 0.15);
+  border-color: rgb(var(--color-brand) / 0.2);
+}
+.dark .card:hover {
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+/* Glass panel – premium floating surface */
+.glass-panel {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 1rem;
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+}
+.dark .glass-panel {
+  background: rgba(15, 15, 18, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
 }
 .animate-fade-in {
   animation: fade-in 0.4s ease-out both;

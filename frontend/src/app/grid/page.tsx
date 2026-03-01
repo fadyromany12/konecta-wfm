@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
+import { motion, AnimatePresence } from "framer-motion";
 import { useAuthStore } from "../../lib/authStore";
 import { apiRequest } from "../../lib/api";
 import { formatTimeHHmm, formatTimeHHmmss } from "../../lib/format";
@@ -228,29 +229,40 @@ export default function ActivityGridPage() {
                         const timeRange = `${formatTimeHHmm(ev.start)}–${formatTimeHHmm(ev.end)}`;
                         const isHovered = hoveredTile?.userId === u.user_id && hoveredTile?.eventIndex === i;
                         return (
-                          <div
+                          <motion.div
                             key={i}
+                            layout
                             className={`absolute top-1 bottom-1 rounded border py-0.5 px-1.5 text-[10px] font-medium text-white shadow-sm transition-transform duration-200 z-10 ${color} ${isHovered ? "scale-110 ring-2 ring-white/40" : "hover:scale-105"}`}
                             style={{
                               left: `${Math.max(0, left)}%`,
                               width: `${Math.min(width, 100 - left)}%`,
                               minWidth: 44,
                             }}
+                            transition={{ type: "tween", duration: 0.25, ease: [0.32, 0.72, 0, 1] }}
                             onMouseEnter={() => setHoveredTile({ userId: u.user_id, eventIndex: i })}
                             onMouseLeave={() => setHoveredTile(null)}
                           >
                             <span className="block truncate">{ev.label || ev.type}</span>
                             <span className="block truncate opacity-90">{timeRange}</span>
-                            {isHovered && (
-                              <div className="absolute left-1/2 -translate-x-1/2 bottom-full mb-1 px-2 py-1.5 rounded-lg bg-slate-900 border border-slate-600 text-xs text-left whitespace-nowrap shadow-xl z-20 pointer-events-none">
-                                <p className="font-semibold text-white">{ev.label || ev.type}</p>
-                                <p>Since: {formatTimeHHmmss(ev.start)}</p>
-                                <p>Till: {formatTimeHHmmss(ev.end)}</p>
-                                <p>{ev.duration_minutes} min</p>
-                                {ev.violation && <p className="text-red-400">{ev.violation}</p>}
-                              </div>
-                            )}
-                          </div>
+                            <AnimatePresence>
+                              {isHovered ? (
+                                <motion.div
+                                  key="tooltip"
+                                  initial={{ opacity: 0, scale: 0.9 }}
+                                  animate={{ opacity: 1, scale: 1 }}
+                                  exit={{ opacity: 0, scale: 0.95 }}
+                                  transition={{ duration: 0.15, ease: [0.32, 0.72, 0, 1] }}
+                                  className="absolute left-1/2 -translate-x-1/2 bottom-full mb-1 px-3 py-2 rounded-xl bg-slate-900/90 border border-violet-500/30 shadow-brand-glow backdrop-blur-xl text-xs text-left whitespace-nowrap z-20 pointer-events-none ring-1 ring-white/10"
+                                >
+                                  <p className="font-semibold text-white">{ev.label || ev.type}</p>
+                                  <p className="text-slate-300">Since: {formatTimeHHmmss(ev.start)}</p>
+                                  <p className="text-slate-300">Till: {formatTimeHHmmss(ev.end)}</p>
+                                  <p className="text-slate-300">{ev.duration_minutes} min</p>
+                                  {ev.violation && <p className="text-red-400">{ev.violation}</p>}
+                                </motion.div>
+                              ) : null}
+                            </AnimatePresence>
+                          </motion.div>
                         );
                       })
                     )}

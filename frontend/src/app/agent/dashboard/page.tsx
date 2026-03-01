@@ -2,11 +2,13 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { motion } from "framer-motion";
 import { useAuthStore } from "../../../lib/authStore";
 import { apiRequest } from "../../../lib/api";
 import { toast } from "../../../lib/toast";
 import { formatTotalHours, safeLabel } from "../../../lib/format";
 import AnnouncementsWidget from "../../../components/AnnouncementsWidget";
+import { FadeInStagger, FadeInItem } from "../../../components/ui/AnimatedWrapper";
 import { Clock, Activity, Calendar, Zap } from "lucide-react";
 
 interface Attendance {
@@ -176,52 +178,76 @@ export default function AgentDashboardPage() {
       )}
 
       {/* Stats row */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <div className="card transition-all duration-300 hover:border-brand/30 hover:shadow-brand/10">
-          <div className="flex items-center gap-3">
-            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-brand/20 text-brand-light">
-              <Clock className="h-5 w-5" />
+      <FadeInStagger className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <FadeInItem>
+          <motion.div
+            className="card transition-all duration-300 hover:border-brand/30 hover:shadow-brand/10"
+            whileHover={{ y: -4, scale: 1.01 }}
+            transition={{ type: "tween", duration: 0.2, ease: [0.32, 0.72, 0, 1] }}
+          >
+            <div className="flex items-center gap-3">
+              <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-brand/20 text-brand-light">
+                <Clock className="h-5 w-5" />
+              </div>
+              <div>
+                <p className="text-xs font-medium uppercase tracking-wider text-slate-500">Status</p>
+                <p className="font-semibold text-white">{openAttendance ? "Clocked in" : "Clocked out"}</p>
+              </div>
             </div>
-            <div>
-              <p className="text-xs font-medium uppercase tracking-wider text-slate-500">Status</p>
-              <p className="font-semibold text-white">{openAttendance ? "Clocked in" : "Clocked out"}</p>
+          </motion.div>
+        </FadeInItem>
+        <FadeInItem>
+          <motion.div
+            className="card transition-all duration-300 hover:border-brand/30 hover:shadow-brand/10"
+            whileHover={{ y: -4, scale: 1.01 }}
+            transition={{ type: "tween", duration: 0.2, ease: [0.32, 0.72, 0, 1] }}
+          >
+            <div className="flex items-center gap-3">
+              <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-slate-700/50 text-slate-300">
+                <Activity className="h-5 w-5" />
+              </div>
+              <div>
+                <p className="text-xs font-medium uppercase tracking-wider text-slate-500">AUX</p>
+                <p className="font-semibold text-white">{openAux ? safeLabel(openAux.aux_type) : "Available"}</p>
+              </div>
             </div>
-          </div>
-        </div>
-        <div className="card transition-all duration-300 hover:border-brand/30 hover:shadow-brand/10">
-          <div className="flex items-center gap-3">
-            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-slate-700/50 text-slate-300">
-              <Activity className="h-5 w-5" />
+          </motion.div>
+        </FadeInItem>
+        <FadeInItem>
+          <motion.div
+            className="card transition-all duration-300 hover:border-brand/30 hover:shadow-brand/10"
+            whileHover={{ y: -4, scale: 1.01 }}
+            transition={{ type: "tween", duration: 0.2, ease: [0.32, 0.72, 0, 1] }}
+          >
+            <div className="flex items-center gap-3">
+              <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-slate-700/50 text-slate-300">
+                <Calendar className="h-5 w-5" />
+              </div>
+              <div>
+                <p className="text-xs font-medium uppercase tracking-wider text-slate-500">Today</p>
+                <p className="font-semibold text-white">{todaySessions.length} session{todaySessions.length !== 1 ? "s" : ""}</p>
+              </div>
             </div>
-            <div>
-              <p className="text-xs font-medium uppercase tracking-wider text-slate-500">AUX</p>
-              <p className="font-semibold text-white">{openAux ? safeLabel(openAux.aux_type) : "Available"}</p>
+          </motion.div>
+        </FadeInItem>
+        <FadeInItem>
+          <motion.div
+            className={`card transition-all duration-300 hover:border-brand/30 hover:shadow-brand/10 ${openAttendance ? "ring-1 ring-violet-500/40 shadow-brand-glow" : ""}`}
+            whileHover={{ y: -4, scale: 1.01 }}
+            transition={{ type: "tween", duration: 0.2, ease: [0.32, 0.72, 0, 1] }}
+          >
+            <div className="flex items-center gap-3">
+              <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-amber-500/20 text-amber-400">
+                <Zap className="h-5 w-5" />
+              </div>
+              <div>
+                <p className="text-xs font-medium uppercase tracking-wider text-slate-500">Live</p>
+                <p className="font-mono font-semibold text-white">{openAttendance ? formatLive(liveSeconds) : "—"}</p>
+              </div>
             </div>
-          </div>
-        </div>
-        <div className="card transition-all duration-300 hover:border-brand/30 hover:shadow-brand/10">
-          <div className="flex items-center gap-3">
-            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-slate-700/50 text-slate-300">
-              <Calendar className="h-5 w-5" />
-            </div>
-            <div>
-              <p className="text-xs font-medium uppercase tracking-wider text-slate-500">Today</p>
-              <p className="font-semibold text-white">{todaySessions.length} session{todaySessions.length !== 1 ? "s" : ""}</p>
-            </div>
-          </div>
-        </div>
-        <div className="card transition-all duration-300 hover:border-brand/30 hover:shadow-brand/10">
-          <div className="flex items-center gap-3">
-            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-amber-500/20 text-amber-400">
-              <Zap className="h-5 w-5" />
-            </div>
-            <div>
-              <p className="text-xs font-medium uppercase tracking-wider text-slate-500">Live</p>
-              <p className="font-mono font-semibold text-white">{openAttendance ? formatLive(liveSeconds) : "—"}</p>
-            </div>
-          </div>
-        </div>
-      </div>
+          </motion.div>
+        </FadeInItem>
+      </FadeInStagger>
 
       <AnnouncementsWidget />
 

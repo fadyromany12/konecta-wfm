@@ -3,6 +3,7 @@
 import { memo, useMemo } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { motion } from "framer-motion";
 import { useAuthStore } from "../lib/authStore";
 import { LogOut, User } from "lucide-react";
 
@@ -80,7 +81,11 @@ function SidebarInner() {
   if (!user) return null;
 
   return (
-    <aside className="sidebar-bg flex w-72 min-h-screen flex-col shrink-0 backdrop-blur-xl">
+    <motion.aside
+      className="sidebar-bg flex w-72 min-h-screen flex-col shrink-0 backdrop-blur-xl border-r border-white/10 shadow-[4px_0_24px_-4px_rgba(0,0,0,0.4)]"
+      initial={false}
+      transition={{ type: "tween", duration: 0.2 }}
+    >
       {/* Logo */}
       <div className="border-b border-[var(--border-sidebar)] px-6 py-5">
         <Link href="/" className="flex items-center gap-2.5">
@@ -96,7 +101,7 @@ function SidebarInner() {
         </Link>
       </div>
 
-      {/* Nav – fills space */}
+      {/* Nav – sliding pill via layoutId */}
       <nav className="flex-1 overflow-y-auto px-3 py-4">
         <p className="mb-3 px-3 text-[11px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
           {user.role}
@@ -108,13 +113,23 @@ function SidebarInner() {
               <li key={href}>
                 <Link
                   href={href}
-                  className={`flex items-center rounded-xl px-3 py-2.5 text-sm font-medium transition-all duration-200 ${
-                    active
-                      ? "bg-[rgb(var(--color-brand)/0.15)] text-[rgb(var(--color-brand-light))]"
-                      : "text-[var(--text-secondary)] hover:bg-[rgb(var(--color-brand)/0.08)] hover:text-[var(--text-primary)]"
-                  }`}
+                  className="relative flex items-center rounded-xl px-3 py-2.5 text-sm font-medium transition-colors duration-200 hover:bg-[rgb(var(--color-brand)/0.08)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[rgb(var(--color-brand))] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg-sidebar)]"
                 >
-                  {label}
+                  {active && (
+                    <motion.span
+                      layoutId="activeNav"
+                      className="absolute inset-0 rounded-xl bg-[rgb(var(--color-brand)/0.2)]"
+                      transition={{
+                        type: "spring",
+                        stiffness: 380,
+                        damping: 30,
+                      }}
+                      style={{ border: "1px solid rgba(124, 58, 237, 0.25)" }}
+                    />
+                  )}
+                  <span className={`relative z-10 ${active ? "text-[rgb(var(--color-brand-light))]" : "text-[var(--text-secondary)] group-hover:text-[var(--text-primary)]"}`}>
+                    {label}
+                  </span>
                 </Link>
               </li>
             );
@@ -122,7 +137,7 @@ function SidebarInner() {
         </ul>
       </nav>
 
-      {/* User + Logout – pinned to bottom, separate block */}
+      {/* User + Logout */}
       <div className="sidebar-footer-bg mt-auto shrink-0 px-4 py-5">
         <div className="mb-3 flex items-center gap-2 rounded-xl px-3 py-2">
           <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[rgb(var(--color-brand)/0.2)]">
@@ -147,7 +162,7 @@ function SidebarInner() {
           Logout
         </button>
       </div>
-    </aside>
+    </motion.aside>
   );
 }
 

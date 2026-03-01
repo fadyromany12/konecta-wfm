@@ -9,6 +9,7 @@ import { useThemeStore } from "../lib/themeStore";
 import Sidebar from "../components/Sidebar";
 import ThemeToggle from "../components/ThemeToggle";
 import NotificationsDropdown from "../components/NotificationsDropdown";
+import { PageTransition } from "../components/ui/AnimatedWrapper";
 
 const AUTH_PAGES = new Set(["/login", "/register", "/forgot-password", "/reset-password", "/verify-email", "/pending"]);
 
@@ -54,7 +55,9 @@ export default function RootLayout({ children }: { children: ReactNode }) {
               </header>
             )}
             <div className="flex-1 p-6 md:p-8 lg:p-10">
-              <div className="mx-auto max-w-6xl animate-fade-in">{children}</div>
+              <div className="mx-auto max-w-6xl">
+                <PageTransition>{children}</PageTransition>
+              </div>
             </div>
           </main>
         </div>
