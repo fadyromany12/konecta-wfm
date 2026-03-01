@@ -1,4 +1,5 @@
 import { query } from "../../db/pool";
+import type { PoolClient } from "pg";
 
 export interface LeaveBalance {
   id: string;
@@ -11,17 +12,18 @@ export interface LeaveBalance {
   updated_at: string;
 }
 
-export async function getBalance(userId: string, year: number, leaveType: string): Promise<LeaveBalance | null> {
+export async function getBalance(userId: string, year: number, leaveType: string, client?: PoolClient): Promise<LeaveBalance | null> {
   const { rows } = await query<LeaveBalance>(
     `SELECT * FROM leave_balances WHERE user_id = $1 AND year = $2 AND leave_type = $3`,
     [userId, year, leaveType],
+    client,
   );
   return rows[0] || null;
 }
 
 /** Available days = balance - used. Returns null if no row (unlimited). */
-export async function getAvailableDays(userId: string, year: number, leaveType: string): Promise<number | null> {
-  const row = await getBalance(userId, year, leaveType);
+export async function getAvailableDays(userId: string, year: number, leaveType: string, client?: PoolClient): Promise<number | null> {
+  const row = await getBalance(userId, year, leaveType, client);
   if (!row) return null;
   const balance = parseFloat(row.balance);
   const used = parseFloat(row.used);
@@ -37,20 +39,27 @@ export async function getBalancesForUser(userId: string, year: number): Promise<
   return rows;
 }
 
-/** Ensure user has at least `days` available. Throws if tracked and insufficient. */
-export async function ensureBalance(userId: string, year: number, leaveType: string, days: number): Promise<void> {
-  const available = await getAvailableDays(userId, year, leaveType);
+/** Ensure user has at least `days` available. Throws if tracked and insufficient. Pass client for use inside a transaction. */
+export async function ensureBalance(userId: string, year: number, leaveType: string, days: number, client?: PoolClient): Promise<void> {
+  const available = await getAvailableDays(userId, year, leaveType, client);
   if (available === null) return;
   if (days > available) {
     throw new Error(`Insufficient ${leaveType} leave balance. Available: ${available} days, requested: ${days}.`);
   }
 }
 
-/** Add `days` to used. Only updates if a row exists (otherwise balance is unlimited). */
-export async function deductBalance(userId: string, year: number, leaveType: string, days: number): Promise<void> {
+/** Add `days` to used. Only updates if a row exists (otherwise balance is unlimited). Pass client for use inside a transaction. */
+export async function deductBalance(
+  userId: string,
+  year: number,
+  leaveType: string,
+  days: number,
+  client?: PoolClient,
+): Promise<void> {
   await query(
     `UPDATE leave_balances SET used = used + $4, updated_at = now() WHERE user_id = $1 AND year = $2 AND leave_type = $3`,
     [userId, year, leaveType, days],
+    client,
   );
 }
 

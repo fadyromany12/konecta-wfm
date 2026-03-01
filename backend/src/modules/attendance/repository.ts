@@ -11,6 +11,7 @@ export interface Attendance {
   overtime_duration: string | null;
   timesheet_approved?: boolean;
   shift_date?: string;
+  status?: string;
 }
 
 export async function getOpenAttendanceForUser(userId: string): Promise<Attendance | null> {
@@ -124,4 +125,17 @@ export async function hasLockedAttendanceForUserAndDate(userId: string, dateStr:
 export async function getAttendanceById(id: string): Promise<Attendance | null> {
   const { rows } = await query<Attendance>(`SELECT * FROM attendance WHERE id = $1`, [id]);
   return rows[0] || null;
+}
+
+/** Mark an attendance record as ANOMALY (e.g. open > 16h). Prevents payroll until manager resolves. */
+export async function updateAttendanceStatus(
+  id: string,
+  status: "ACTIVE" | "ANOMALY",
+  client?: import("pg").PoolClient,
+): Promise<void> {
+  await query(
+    `UPDATE attendance SET status = $2 WHERE id = $1`,
+    [id, status],
+    client,
+  );
 }

@@ -67,7 +67,7 @@ router.get("/activity", requireRole(["agent", "manager", "admin", "project_manag
         `SELECT user_id, aux_type, start_time, end_time, duration, over_limit FROM auxlogs WHERE user_id = ANY($1::uuid[]) AND start_time::date = $2 ORDER BY start_time`,
         [userIds, date],
       ),
-      query(`SELECT * FROM schedules WHERE user_id = ANY($1::uuid[]) AND date = $2`, [userIds, date]),
+      query(`SELECT * FROM v_effective_schedules WHERE user_id = ANY($1::uuid[]) AND date = $2`, [userIds, date]),
       query<{ user_id: string; type: string; start_at: string; end_at: string; title: string | null }>(
         `SELECT user_id, type, start_at, end_at, title FROM schedule_activities WHERE user_id = ANY($1::uuid[]) AND activity_date = $2 ORDER BY start_at`,
         [userIds, date],

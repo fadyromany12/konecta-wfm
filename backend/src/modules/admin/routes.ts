@@ -1,9 +1,10 @@
 import { Router } from "express";
 import multer from "multer";
+import QueryStream from "pg-query-stream";
 import { authenticateJWT, AuthRequest, requireRole } from "../../middleware/auth";
-import { query } from "../../db/pool";
+import { query, runInTransaction, pool } from "../../db/pool";
 import { findUserByEmail } from "../users/userRepository";
-import { upsertSchedule } from "../schedules/repository";
+import { upsertSchedule, updateSchedule, batchUpsertSchedules } from "../schedules/repository";
 import { approveAgentAndSetTempPassword, setTempPasswordForUser } from "../auth/service";
 import { createNotification } from "../notifications/repository";
 import { getOpenAuxForUser, closeAux, createAux } from "../auxlogs/repository";
@@ -147,17 +148,21 @@ router.post("/roles", async (req: AuthRequest, res) => {
   const { name, description, permissionIds } = req.body as { name?: string; description?: string; permissionIds?: string[] };
   if (!name?.trim()) return res.status(400).json({ error: { message: "name required" } });
   try {
-    const { rows } = await query(
-      `INSERT INTO roles (name, description) VALUES ($1, $2) RETURNING *`,
-      [name.trim(), description?.trim() || null],
-    );
-    const roleId = rows[0].id;
-    if (Array.isArray(permissionIds) && permissionIds.length) {
-      for (const pid of permissionIds) {
-        await query(`INSERT INTO role_permissions (role_id, permission_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`, [roleId, pid]);
+    const row = await runInTransaction(async (client) => {
+      const { rows } = await query(
+        `INSERT INTO roles (name, description) VALUES ($1, $2) RETURNING *`,
+        [name.trim(), description?.trim() || null],
+        client,
+      );
+      const roleId = rows[0].id;
+      if (Array.isArray(permissionIds) && permissionIds.length) {
+        for (const pid of permissionIds) {
+          await query(`INSERT INTO role_permissions (role_id, permission_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`, [roleId, pid], client);
+        }
       }
-    }
-    return res.status(201).json(rows[0]);
+      return rows[0];
+    });
+    return res.status(201).json(row);
   } catch (err: any) {
     return res.status(400).json({ error: { message: err.message || "Failed" } });
   }
@@ -412,102 +417,86 @@ router.get("/export/overtime", async (req: AuthRequest, res) => {
   }
 });
 
-// Daily agents export: one row per user per day with Login, breaks, Logout, Tardy, Overtime, Leave Type, exceed flags, aux codes with time
+// Daily agents export: stream one row per user per day (no in-memory aggregation; uses pg-query-stream).
+const DAILY_EXPORT_SQL = `
+WITH agents AS (SELECT id AS user_id, first_name, last_name FROM users WHERE role = 'agent' AND status = 'active'),
+     dates AS (SELECT generate_series($1::date, $2::date, '1 day'::interval)::date AS date_str),
+     grid AS (SELECT a.user_id, a.first_name, a.last_name, d.date_str FROM agents a CROSS JOIN dates d),
+     att AS (SELECT user_id, shift_date AS date_str, clock_in, clock_out, total_hours, is_late, is_early_logout, overtime_duration FROM attendance WHERE shift_date >= $1 AND shift_date <= $2),
+     sched AS (SELECT user_id, date AS date_str, shift_start, shift_end FROM v_effective_schedules WHERE date >= $1 AND date <= $2),
+     leave_expanded AS (SELECT lr.user_id, g.d::date AS date_str, lr.type AS leave_type FROM leave_requests lr CROSS JOIN LATERAL generate_series(lr.start_date, lr.end_date, '1 day'::interval) g(d) WHERE lr.status = 'approved'),
+     leave_agg AS (SELECT user_id, date_str, max(leave_type) AS leave_type FROM leave_expanded WHERE date_str >= $1 AND date_str <= $2 GROUP BY user_id, date_str),
+     aux_agg AS (SELECT user_id, start_time::date AS date_str,
+       min(start_time) FILTER (WHERE aux_type = 'break') AS first_break_start, max(end_time) FILTER (WHERE aux_type = 'break') AS first_break_end,
+       min(start_time) FILTER (WHERE aux_type = 'lunch') AS lunch_start, max(end_time) FILTER (WHERE aux_type = 'lunch') AS lunch_end,
+       min(start_time) FILTER (WHERE aux_type = 'last_break') AS last_break_start, max(end_time) FILTER (WHERE aux_type = 'last_break') AS last_break_end,
+       bool_or(over_limit) FILTER (WHERE aux_type = 'break') AS first_break_over_limit,
+       bool_or(over_limit) FILTER (WHERE aux_type = 'lunch') AS lunch_over_limit,
+       bool_or(over_limit) FILTER (WHERE aux_type = 'last_break') AS last_break_over_limit,
+       string_agg(aux_type || ' ' || to_char(start_time, 'HH24:MI') || CASE WHEN end_time IS NOT NULL THEN '-' || to_char(end_time, 'HH24:MI') ELSE '' END, '; ' ORDER BY start_time) AS aux_codes
+       FROM auxlogs WHERE start_time::date >= $1 AND start_time::date <= $2 GROUP BY user_id, start_time::date)
+SELECT to_char(grid.date_str, 'YYYY-MM-DD') AS date_str, grid.first_name, grid.last_name,
+  att.clock_in, att.clock_out, sched.shift_start, sched.shift_end, att.total_hours, att.is_late, att.is_early_logout, att.overtime_duration,
+  leave_agg.leave_type,
+  aux_agg.first_break_start, aux_agg.first_break_end, aux_agg.lunch_start, aux_agg.lunch_end, aux_agg.last_break_start, aux_agg.last_break_end,
+  aux_agg.first_break_over_limit, aux_agg.lunch_over_limit, aux_agg.last_break_over_limit, aux_agg.aux_codes
+FROM grid
+LEFT JOIN att ON att.user_id = grid.user_id AND att.date_str = grid.date_str
+LEFT JOIN sched ON sched.user_id = grid.user_id AND sched.date_str = grid.date_str
+LEFT JOIN leave_agg ON leave_agg.user_id = grid.user_id AND leave_agg.date_str = grid.date_str
+LEFT JOIN aux_agg ON aux_agg.user_id = grid.user_id AND aux_agg.date_str = grid.date_str
+ORDER BY grid.first_name, grid.last_name, grid.date_str
+`;
+
 router.get("/export/daily", async (req: AuthRequest, res) => {
+  const today = new Date().toISOString().slice(0, 10);
+  const from = (req.query.from as string)?.trim() || today;
+  const to = (req.query.to as string)?.trim() || today;
+  const header = "Date,User Name,Login,First Break In,First Break Out,Lunch In,Lunch Out,Last Break In,Last Break Out,Logout,Tardy (mins),Overtime (mins),Early Leave (mins),Leave Type,1st Break Exceed,Lunch Exceed,Last Break Exceed,NetLoginHours,PreShiftOvertime,PostShiftOvertime,OvernightEligible,TransportEligible,Aux Codes With Time";
+  res.setHeader("Content-Type", "text/csv");
+  res.setHeader("Content-Disposition", `attachment; filename=daily-agents-${from}-${to}.csv`);
+  res.write(header + "\r\n");
+
+  let client;
   try {
-    const today = new Date().toISOString().slice(0, 10);
-    const from = (req.query.from as string)?.trim() || today;
-    const to = (req.query.to as string)?.trim() || today;
-    const { rows: agents } = await query(`SELECT id, first_name, last_name FROM users WHERE role = 'agent' AND status = 'active' ORDER BY first_name, last_name`);
-    const { rows: attendance } = await query(
-      `SELECT a.user_id, a.shift_date, a.clock_in, a.clock_out, a.total_hours, a.is_late, a.is_early_logout, a.overtime_duration
-       FROM attendance a WHERE a.shift_date >= $1 AND a.shift_date <= $2`,
-      [from, to],
-    );
-    const { rows: schedules } = await query(
-      `SELECT user_id, date, shift_start, shift_end, break_1_start, break_1_end, break_2_start, break_2_end, break_3_start, break_3_end FROM schedules WHERE date >= $1 AND date <= $2`,
-      [from, to],
-    );
-    const { rows: auxLogs } = await query(
-      `SELECT user_id, aux_type, start_time, end_time, over_limit FROM auxlogs WHERE start_time::date >= $1 AND start_time::date <= $2 ORDER BY user_id, start_time`,
-      [from, to],
-    );
-    const { rows: leave } = await query(
-      `SELECT user_id, type, start_date, end_date FROM leave_requests WHERE status = 'approved' AND start_date <= $2 AND end_date >= $1`,
-      [from, to],
-    );
-    const header = "Date,User Name,Login,First Break In,First Break Out,Lunch In,Lunch Out,Last Break In,Last Break Out,Logout,Tardy (mins),Overtime (mins),Early Leave (mins),Leave Type,1st Break Exceed,Lunch Exceed,Last Break Exceed,NetLoginHours,PreShiftOvertime,PostShiftOvertime,OvernightEligible,TransportEligible,Aux Codes With Time";
-    const lines: string[] = [header];
-    const attByUserDate = new Map<string, any>();
-    attendance.forEach((a: any) => attByUserDate.set(`${a.user_id}:${a.shift_date}`, a));
-    const schedByUserDate = new Map<string, any>();
-    schedules.forEach((s: any) => schedByUserDate.set(`${s.user_id}:${s.date}`, s));
-    const auxByUserDate = new Map<string, any[]>();
-    auxLogs.forEach((a: any) => {
-      const d = (a.start_time as string).slice(0, 10);
-      const key = `${a.user_id}:${d}`;
-      if (!auxByUserDate.has(key)) auxByUserDate.set(key, []);
-      auxByUserDate.get(key)!.push(a);
-    });
-    const leaveByUserDate = new Map<string, string>();
-    leave.forEach((l: any) => {
-      for (const d of dateRangeArray(l.start_date, l.end_date)) {
-        if (d >= from && d <= to) leaveByUserDate.set(`${l.user_id}:${d}`, l.type || "leave");
-      }
-    });
-    const dateStrs = dateRangeArray(from, to);
-    for (const u of agents as { id: string; first_name: string; last_name: string }[]) {
-      for (const dateStr of dateStrs) {
-        const att = attByUserDate.get(`${u.id}:${dateStr}`);
-        const sched = schedByUserDate.get(`${u.id}:${dateStr}`);
-        const auxList = auxByUserDate.get(`${u.id}:${dateStr}`) || [];
-        const leaveType = leaveByUserDate.get(`${u.id}:${dateStr}`) || (att ? "present" : "absent");
-        const firstBreak = auxList.find((a: any) => a.aux_type === "break");
-        const lunch = auxList.find((a: any) => a.aux_type === "lunch");
-        const lastBreak = auxList.find((a: any) => a.aux_type === "last_break");
-        const login = att?.clock_in ? new Date(att.clock_in).toISOString() : "";
-        const logout = att?.clock_out ? new Date(att.clock_out).toISOString() : "";
-        const tardyMins = att?.is_late && sched?.shift_start ? Math.max(0, Math.round((new Date(att.clock_in).getTime() - new Date(sched.shift_start).getTime()) / 60000)) : 0;
-        const overtimeMins = att?.overtime_duration ? Math.round((typeof att.overtime_duration === "string" ? parseInterval(att.overtime_duration) : 0) / 60) : 0;
-        const earlyMins = att?.is_early_logout && sched?.shift_end ? Math.max(0, Math.round((new Date(sched.shift_end).getTime() - new Date(att.clock_out).getTime()) / 60000)) : 0;
-        const totalHoursSec = att?.total_hours ? (typeof att.total_hours === "string" ? parseInterval(att.total_hours) : (typeof att.total_hours === "object" && att.total_hours && "hours" in att.total_hours ? ((att.total_hours as any).hours || 0) * 3600 + ((att.total_hours as any).minutes || 0) * 60 + ((att.total_hours as any).seconds || 0) : 0)) : 0;
-        const netHours = totalHoursSec / 3600;
-        const auxCodesWithTime = auxList.map((a: any) => `${a.aux_type} ${(a.start_time as string).slice(11, 16)}${a.end_time ? "-" + (a.end_time as string).slice(11, 16) : ""}`).join("; ");
-        const overnightEligible = sched?.shift_end && new Date(sched.shift_end).getUTCHours() >= 19 ? "Y" : "";
-        const transportEligible = att ? "Y" : "";
-        lines.push([
-          dateStr,
-          `${u.first_name} ${u.last_name}`,
-          login,
-          firstBreak?.start_time ? (firstBreak.start_time as string).slice(11, 19) : "",
-          firstBreak?.end_time ? (firstBreak.end_time as string).slice(11, 19) : "",
-          lunch?.start_time ? (lunch.start_time as string).slice(11, 19) : "",
-          lunch?.end_time ? (lunch.end_time as string).slice(11, 19) : "",
-          lastBreak?.start_time ? (lastBreak.start_time as string).slice(11, 19) : "",
-          lastBreak?.end_time ? (lastBreak.end_time as string).slice(11, 19) : "",
-          logout,
-          tardyMins,
-          overtimeMins,
-          earlyMins,
-          leaveType,
-          firstBreak?.over_limit ? "Y" : "",
-          lunch?.over_limit ? "Y" : "",
-          lastBreak?.over_limit ? "Y" : "",
-          netHours.toFixed(2),
-          "",
-          "",
-          overnightEligible,
-          transportEligible,
-          auxCodesWithTime,
-        ].map(String).map(escapeCsv).join(","));
-      }
-    }
-    res.setHeader("Content-Type", "text/csv");
-    res.setHeader("Content-Disposition", `attachment; filename=daily-agents-${from}-${to}.csv`);
-    return res.send(lines.join("\r\n"));
+    client = await pool.connect();
   } catch (err: any) {
     return res.status(400).json({ error: { message: err.message || "Export failed" } });
   }
+  const stream = client.query(new QueryStream(DAILY_EXPORT_SQL, [from, to]));
+
+  stream.on("data", (row: any) => {
+    const dateStr = row.date_str ?? "";
+    const userName = [row.first_name, row.last_name].filter(Boolean).join(" ");
+    const login = row.clock_in ? new Date(row.clock_in).toISOString() : "";
+    const logout = row.clock_out ? new Date(row.clock_out).toISOString() : "";
+    const tardyMins = row.is_late && row.shift_start ? Math.max(0, Math.round((new Date(row.clock_in).getTime() - new Date(row.shift_start).getTime()) / 60000)) : 0;
+    const totalHoursStr = row.total_hours != null ? String(row.total_hours) : "";
+    const totalHoursSec = totalHoursStr ? parseInterval(totalHoursStr) : 0;
+    const overtimeMins = row.overtime_duration != null ? Math.round(parseInterval(String(row.overtime_duration)) / 60) : 0;
+    const earlyMins = row.is_early_logout && row.shift_end && row.clock_out ? Math.max(0, Math.round((new Date(row.shift_end).getTime() - new Date(row.clock_out).getTime()) / 60000)) : 0;
+    const leaveType = row.leave_type || (row.clock_in ? "present" : "absent");
+    const netHours = (totalHoursSec / 3600).toFixed(2);
+    const fbStart = row.first_break_start ? String(row.first_break_start).slice(11, 19) : "";
+    const fbEnd = row.first_break_end ? String(row.first_break_end).slice(11, 19) : "";
+    const lunchStart = row.lunch_start ? String(row.lunch_start).slice(11, 19) : "";
+    const lunchEnd = row.lunch_end ? String(row.lunch_end).slice(11, 19) : "";
+    const lbStart = row.last_break_start ? String(row.last_break_start).slice(11, 19) : "";
+    const lbEnd = row.last_break_end ? String(row.last_break_end).slice(11, 19) : "";
+    const overnightEligible = row.shift_end && new Date(row.shift_end).getUTCHours() >= 19 ? "Y" : "";
+    const transportEligible = row.clock_in ? "Y" : "";
+    const line = [dateStr, userName, login, fbStart, fbEnd, lunchStart, lunchEnd, lbStart, lbEnd, logout, tardyMins, overtimeMins, earlyMins, leaveType, row.first_break_over_limit ? "Y" : "", row.lunch_over_limit ? "Y" : "", row.last_break_over_limit ? "Y" : "", netHours, "", "", overnightEligible, transportEligible, row.aux_codes ?? ""].map(String).map(escapeCsv).join(",");
+    res.write(line + "\r\n");
+  });
+  stream.on("end", () => {
+    client.release();
+    res.end();
+  });
+  stream.on("error", (err: Error) => {
+    client.release();
+    if (!res.headersSent) res.status(400).json({ error: { message: err.message || "Export failed" } });
+    else res.end();
+  });
 });
 
 function parseInterval(s: string): number {
@@ -557,7 +546,7 @@ router.post("/schedules/import", upload.single("file"), async (req: AuthRequest,
     return res.status(400).json({ error: { message: "CSV must have email, date, day_type columns" } });
   }
   const errors: string[] = [];
-  let imported = 0;
+  const items: { userId: string; date: string; shiftStart: string | null; shiftEnd: string | null; dayType: string }[] = [];
   for (let i = 1; i < lines.length; i++) {
     const cells = lines[i].split(",").map((c) => c.trim());
     const email = cells[emailIdx];
@@ -574,24 +563,52 @@ router.post("/schedules/import", upload.single("file"), async (req: AuthRequest,
       errors.push(`Row ${i + 1}: user not found: ${email}`);
       continue;
     }
-    try {
-      await upsertSchedule({
-        userId: user.id,
-        date,
-        shiftStart,
-        shiftEnd,
-        dayType,
-      });
-      imported++;
-    } catch (e: any) {
-      errors.push(`Row ${i + 1}: ${e.message || "Failed"}`);
-    }
+    items.push({ userId: user.id, date, shiftStart, shiftEnd, dayType });
   }
-  return res.json({ imported, errors });
+  if (items.length === 0) {
+    return res.json({ imported: 0, updated: 0, errors });
+  }
+  try {
+    const result = await runInTransaction(async (client) => batchUpsertSchedules(items, client));
+    return res.json({ imported: result.inserted, updated: result.updated, errors });
+  } catch (e: any) {
+    errors.push(e.message || "Batch import failed");
+    return res.json({ imported: 0, updated: 0, errors });
+  }
+});
+
+router.post("/schedules/batch", async (req: AuthRequest, res) => {
+  const body = req.body as { schedules?: Array<{ user_id: string; date: string; shift_start?: string | null; shift_end?: string | null; day_type?: string; project_id?: string | null; break_1_start?: string | null; break_1_end?: string | null; break_2_start?: string | null; break_2_end?: string | null; break_3_start?: string | null; break_3_end?: string | null }> };
+  const list = body.schedules;
+  if (!Array.isArray(list) || list.length === 0) {
+    return res.status(400).json({ error: { message: "schedules array required and must not be empty" } });
+  }
+  const items = list.map((s) => ({
+    userId: s.user_id,
+    date: s.date,
+    projectId: s.project_id ?? null,
+    shiftStart: s.shift_start ?? null,
+    shiftEnd: s.shift_end ?? null,
+    break1Start: s.break_1_start ?? null,
+    break1End: s.break_1_end ?? null,
+    break2Start: s.break_2_start ?? null,
+    break2End: s.break_2_end ?? null,
+    break3Start: s.break_3_start ?? null,
+    break3End: s.break_3_end ?? null,
+    dayType: s.day_type || "work",
+  }));
+  try {
+    const result = await runInTransaction((client) => batchUpsertSchedules(items, client));
+    return res.json({ inserted: result.inserted, updated: result.updated });
+  } catch (err: any) {
+    return res.status(400).json({ error: { message: err.message || "Batch update failed" } });
+  }
 });
 
 router.put("/schedules", async (req: AuthRequest, res) => {
   const body = req.body as {
+    id?: string;
+    version?: number;
     user_id?: string;
     date?: string;
     project_id?: string | null;
@@ -605,27 +622,33 @@ router.put("/schedules", async (req: AuthRequest, res) => {
     break_3_end?: string | null;
     day_type?: string;
   };
-  const { user_id, date, shift_start, shift_end, day_type } = body;
+  const { id, version, user_id, date, shift_start, shift_end, day_type } = body;
   if (!user_id || !date) {
     return res.status(400).json({ error: { message: "user_id and date required" } });
   }
+  const params = {
+    userId: user_id,
+    date,
+    projectId: body.project_id ?? null,
+    shiftStart: shift_start ?? null,
+    shiftEnd: shift_end ?? null,
+    break1Start: body.break_1_start ?? null,
+    break1End: body.break_1_end ?? null,
+    break2Start: body.break_2_start ?? null,
+    break2End: body.break_2_end ?? null,
+    break3Start: body.break_3_start ?? null,
+    break3End: body.break_3_end ?? null,
+    dayType: day_type || "work",
+  };
   try {
-    const row = await upsertSchedule({
-      userId: user_id,
-      date,
-      projectId: body.project_id ?? null,
-      shiftStart: shift_start ?? null,
-      shiftEnd: shift_end ?? null,
-      break1Start: body.break_1_start ?? null,
-      break1End: body.break_1_end ?? null,
-      break2Start: body.break_2_start ?? null,
-      break2End: body.break_2_end ?? null,
-      break3Start: body.break_3_start ?? null,
-      break3End: body.break_3_end ?? null,
-      dayType: day_type || "work",
-    });
+    if (id != null && version != null) {
+      const row = await updateSchedule(id, version, params);
+      return res.json(row);
+    }
+    const row = await upsertSchedule(params);
     return res.json(row);
   } catch (err: any) {
+    if (err?.message === "CONFLICT") return res.status(409).json({ error: { message: "Schedule was updated by someone else; refresh and try again." } });
     return res.status(400).json({ error: { message: err.message || "Failed" } });
   }
 });

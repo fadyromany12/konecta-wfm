@@ -7,7 +7,8 @@
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
-    "setup-db": "node scripts/setup-db.js"
+    "setup-db": "node scripts/setup-db.js",
+    "migrate:acid": "node scripts/run-migration.js sql/migrations_acid_occ_exceptions.sql"
   },
   "keywords": [],
   "author": "",
@@ -29,6 +30,7 @@
     "nodemailer": "^8.0.1",
     "pg": "^8.19.0",
     "pg-hstore": "^2.3.4",
+    "pg-query-stream": "^4.13.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {

@@ -1,14 +1,13 @@
 import { Router } from "express";
 import { authenticateJWT, AuthRequest, requireRole } from "../../middleware/auth";
 import { query, runInTransaction } from "../../db/pool";
-import { getTeamSchedulesByManager, upsertSchedule } from "../schedules/repository";
+import { getTeamSchedulesByManager } from "../schedules/repository";
 import { createNotification } from "../notifications/repository";
 import { approveAgentAndSetTempPassword, setTempPasswordForUser } from "../auth/service";
-import { getLeaveById } from "../leave/repository";
+import { approveLeave } from "../leave/service";
 import { getOpenAuxForUser, closeAux, createAux } from "../auxlogs/repository";
-import { deductBalance } from "../leaveBalances/repository";
 import { lockAttendanceRecords, hasLockedAttendanceForUserAndDate, getAttendanceById } from "../attendance/repository";
-import { dateRangeArray, daysAgo } from "../../utils/dateHelpers";
+import { daysAgo } from "../../utils/dateHelpers";
 
 const router = Router();
 
@@ -506,45 +505,8 @@ router.post("/leave/:id/approve", async (req: AuthRequest, res) => {
   const managerId = req.user!.sub;
   const { id } = req.params;
   try {
-    let userId: string;
-    await runInTransaction(async (client) => {
-      const { rows: leaveRows } = await query<{ user_id: string }>(
-        `SELECT lr.user_id FROM leave_requests lr JOIN users u ON lr.user_id = u.id WHERE lr.id = $1 AND u.manager_id = $2 AND lr.status = 'pending'`,
-        [id, managerId],
-        client,
-      );
-      if (!leaveRows.length) {
-        throw new Error("Leave request not found or not in your team");
-      }
-      userId = leaveRows[0].user_id;
-      await query(
-        `UPDATE leave_requests SET status = 'approved', approved_by = $2 WHERE id = $1`,
-        [id, managerId],
-        client,
-      );
-      const leave = await getLeaveById(id, client);
-      if (leave) {
-        for (const dateStr of dateRangeArray(leave.start_date, leave.end_date)) {
-          await upsertSchedule(
-            {
-              userId,
-              date: dateStr,
-              shiftStart: null,
-              shiftEnd: null,
-              dayType: leave.type,
-            },
-            client,
-          );
-        }
-      }
-    });
-    const leave = await getLeaveById(id);
-    if (leave && (leave.type === "annual" || leave.type === "sick")) {
-      const year = new Date(leave.start_date).getFullYear();
-      const days = dateRangeArray(leave.start_date, leave.end_date).length;
-      await deductBalance(leave.user_id, year, leave.type, days);
-    }
-    await createNotification(userId!, "Your leave request has been approved.", "leave_approved");
+    const { userId } = await approveLeave(id, managerId);
+    await createNotification(userId, "Your leave request has been approved.", "leave_approved");
     return res.json({ message: "Leave approved" });
   } catch (err: any) {
     const message = err instanceof Error ? err.message : "Approve leave failed";

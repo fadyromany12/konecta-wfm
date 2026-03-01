@@ -20,6 +20,7 @@ interface ScheduleRow {
   shift_start: string | null;
   shift_end: string | null;
   day_type: string;
+  version?: number;
   first_name?: string;
   last_name?: string;
   email?: string;
@@ -92,7 +93,7 @@ export default function AdminSchedulePage() {
         body: formData,
       });
       const data = await res.json();
-      if (data.imported !== undefined) setImportResult({ imported: data.imported, errors: data.errors || [] });
+      if (data.imported !== undefined) setImportResult({ imported: data.imported, updated: data.updated, errors: data.errors || [] });
       else setImportResult({ imported: 0, errors: [data?.error?.message || "Import failed"] });
     } catch (e) {
       setImportResult({ imported: 0, errors: [(e as Error).message] });
@@ -117,23 +118,22 @@ export default function AdminSchedulePage() {
   async function pasteRow(agentId: string) {
     if (!copiedRow || !token) return;
     setSaving(true);
-    for (const c of copiedRow.cells) {
-      try {
-        await apiRequest("/admin/schedules", {
-          method: "PUT",
-          body: JSON.stringify({
-            user_id: agentId,
-            date: c.date,
-            shift_start: c.start ? `${c.date}T${c.start}:00` : null,
-            shift_end: c.end ? `${c.date}T${c.end}:00` : null,
-            day_type: c.dayType,
-          }),
-        }, token);
-      } catch { /* skip */ }
+    try {
+      const schedules = copiedRow.cells.map((c) => ({
+        user_id: agentId,
+        date: c.date,
+        shift_start: c.start ? `${c.date}T${c.start}:00` : null,
+        shift_end: c.end ? `${c.date}T${c.end}:00` : null,
+        day_type: c.dayType,
+      }));
+      await apiRequest("/admin/schedules/batch", { method: "POST", body: JSON.stringify({ schedules }) }, token);
+      const res = await apiRequest<ScheduleRow[]>(`/admin/schedules?from=${from}&to=${to}`, {}, token);
+      setSchedules(res);
+    } catch {
+      // ignore
+    } finally {
+      setSaving(false);
     }
-    setSaving(false);
-    const res = await apiRequest<ScheduleRow[]>(`/admin/schedules?from=${from}&to=${to}`, {}, token);
-    setSchedules(res);
   }
 
   function copyCol(date: string) {
@@ -150,23 +150,22 @@ export default function AdminSchedulePage() {
   async function pasteCol(date: string) {
     if (!copiedCol || !token) return;
     setSaving(true);
-    for (const c of copiedCol.cells) {
-      try {
-        await apiRequest("/admin/schedules", {
-          method: "PUT",
-          body: JSON.stringify({
-            user_id: c.userId,
-            date,
-            shift_start: c.start ? `${date}T${c.start}:00` : null,
-            shift_end: c.end ? `${date}T${c.end}:00` : null,
-            day_type: c.dayType,
-          }),
-        }, token);
-      } catch { /* skip */ }
+    try {
+      const schedules = copiedCol.cells.map((c) => ({
+        user_id: c.userId,
+        date,
+        shift_start: c.start ? `${date}T${c.start}:00` : null,
+        shift_end: c.end ? `${date}T${c.end}:00` : null,
+        day_type: c.dayType,
+      }));
+      await apiRequest("/admin/schedules/batch", { method: "POST", body: JSON.stringify({ schedules }) }, token);
+      const res = await apiRequest<ScheduleRow[]>(`/admin/schedules?from=${from}&to=${to}`, {}, token);
+      setSchedules(res);
+    } catch {
+      // ignore
+    } finally {
+      setSaving(false);
     }
-    setSaving(false);
-    const res = await apiRequest<ScheduleRow[]>(`/admin/schedules?from=${from}&to=${to}`, {}, token);
-    setSchedules(res);
   }
 
   function saveGroup(name: string, agentIds: string[]) {
@@ -190,22 +189,30 @@ export default function AdminSchedulePage() {
   async function saveCell(userId: string, date: string, shiftStart: string, shiftEnd: string, dayType: string) {
     if (!token) return;
     setSaving(true);
+    const existing = scheduleMap.get(`${userId}:${date}`);
+    const body: Record<string, unknown> = {
+      user_id: userId,
+      date,
+      shift_start: shiftStart ? `${date}T${shiftStart}:00` : null,
+      shift_end: shiftEnd ? `${date}T${shiftEnd}:00` : null,
+      day_type: dayType,
+    };
+    if (existing?.id != null && existing?.version != null) {
+      body.id = existing.id;
+      body.version = existing.version;
+    }
     try {
-      await apiRequest("/admin/schedules", {
-        method: "PUT",
-        body: JSON.stringify({
-          user_id: userId,
-          date,
-          shift_start: shiftStart ? `${date}T${shiftStart}:00` : null,
-          shift_end: shiftEnd ? `${date}T${shiftEnd}:00` : null,
-          day_type: dayType,
-        }),
-      }, token);
+      await apiRequest("/admin/schedules", { method: "PUT", body: JSON.stringify(body) }, token);
       setEditCell(null);
       const res = await apiRequest<ScheduleRow[]>(`/admin/schedules?from=${from}&to=${to}`, {}, token);
       setSchedules(res);
-    } catch {
-      // ignore
+    } catch (e) {
+      const msg = (e as Error).message;
+      if (msg.includes("updated by someone else") || msg.includes("Conflict")) {
+        const res = await apiRequest<ScheduleRow[]>(`/admin/schedules?from=${from}&to=${to}`, {}, token);
+        setSchedules(res);
+        setEditCell(null);
+      }
     } finally {
       setSaving(false);
     }
@@ -257,7 +264,7 @@ export default function AdminSchedulePage() {
         </div>
         {importResult && (
           <p className="text-sm text-slate-300">
-            Imported: {importResult.imported}. {importResult.errors.length > 0 && `Errors: ${importResult.errors.join("; ")}`}
+            Imported: {importResult.imported}. {importResult.updated != null && `Updated: ${importResult.updated}.`} {importResult.errors.length > 0 && `Errors: ${importResult.errors.join("; ")}`}
           </p>
         )}
       </div>

@@ -5,6 +5,7 @@ import {
   getAttendanceHistoryForUser,
   getOpenAttendanceForUser,
   hasLockedAttendanceForUserAndDate,
+  updateAttendanceStatus,
 } from "./repository";
 import { getScheduleByUserAndDate } from "../schedules/repository";
 import { getAppTimezone } from "../settings/service";
@@ -73,7 +74,6 @@ export async function clockOut(userId: string): Promise<Attendance> {
   const shiftDateStr = formatDateInTimezone(open.clock_in, tz);
   const schedule = await getScheduleByUserAndDate(userId, shiftDateStr);
   let isEarlyLogout = false;
-  let overtimeSeconds = 0;
 
   const clockInTime = new Date(open.clock_in);
   const workedSeconds = Math.max(0, Math.floor((now.getTime() - clockInTime.getTime()) / 1000));
@@ -82,17 +82,12 @@ export async function clockOut(userId: string): Promise<Attendance> {
     const shiftEnd = new Date(schedule.shift_end);
     if (now < shiftEnd) {
       isEarlyLogout = true;
-    } else {
-      const scheduledSeconds = Math.max(
-        0,
-        Math.floor((shiftEnd.getTime() - clockInTime.getTime()) / 1000),
-      );
-      overtimeSeconds = Math.max(0, workedSeconds - scheduledSeconds);
     }
   }
 
   const totalHoursInterval = `${workedSeconds} seconds`;
-  const overtimeInterval = `${overtimeSeconds} seconds`;
+  // Overtime is calculated weekly (e.g. over 40h) by a background/sync utility, not per shift.
+  const overtimeInterval = "0 seconds";
 
   return closeAttendanceSession({
     id: open.id,

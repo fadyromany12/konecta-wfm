@@ -11,7 +11,8 @@ import {
   getShiftSwapsForManager,
   getShiftSwapById,
 } from "./repository";
-import { getScheduleByUserAndDate, upsertSchedule } from "../schedules/repository";
+import { getScheduleByUserAndDate } from "../schedules/repository";
+import { insertException } from "../scheduleExceptions/repository";
 
 const router = Router();
 
@@ -77,37 +78,25 @@ router.post("/:id/manager-approve", requireRole(["manager"]), asyncHandler(async
         const reqSchedule = await getScheduleByUserAndDate(swap.requester_id, swap.date, client);
         const tgtSchedule = await getScheduleByUserAndDate(swap.target_id, swap.date, client);
         if (reqSchedule && tgtSchedule) {
-          await upsertSchedule(
+          await insertException(
             {
               userId: swap.requester_id,
               date: swap.date,
-              projectId: tgtSchedule.project_id,
+              exceptionType: "swap",
+              refId: id,
               shiftStart: tgtSchedule.shift_start,
               shiftEnd: tgtSchedule.shift_end,
-              break1Start: tgtSchedule.break_1_start,
-              break1End: tgtSchedule.break_1_end,
-              break2Start: tgtSchedule.break_2_start,
-              break2End: tgtSchedule.break_2_end,
-              break3Start: tgtSchedule.break_3_start,
-              break3End: tgtSchedule.break_3_end,
-              dayType: tgtSchedule.day_type,
             },
             client,
           );
-          await upsertSchedule(
+          await insertException(
             {
               userId: swap.target_id,
               date: swap.date,
-              projectId: reqSchedule.project_id,
+              exceptionType: "swap",
+              refId: id,
               shiftStart: reqSchedule.shift_start,
               shiftEnd: reqSchedule.shift_end,
-              break1Start: reqSchedule.break_1_start,
-              break1End: reqSchedule.break_1_end,
-              break2Start: reqSchedule.break_2_start,
-              break2End: reqSchedule.break_2_end,
-              break3Start: reqSchedule.break_3_start,
-              break3End: reqSchedule.break_3_end,
-              dayType: reqSchedule.day_type,
             },
             client,
           );
