@@ -4,18 +4,9 @@ import { asyncHandler, httpError } from "../../utils/asyncHandler";
 import { createLeave, getLeaveByUser } from "./repository";
 import { ensureBalance, getBalancesForUser, getAvailableDays } from "../leaveBalances/repository";
 import { dateRangeArray } from "../../utils/dateHelpers";
-import { z } from "zod";
+import { createLeaveBodySchema, leaveBalancesQuerySchema } from "./schema";
 
 const router = Router();
-const createSchema = z.object({
-  type: z.enum(["annual", "sick", "casual", "overtime", "cancel_day_off"]),
-  start_date: z.string(),
-  end_date: z.string(),
-  start_time: z.string().optional().nullable(),
-  end_time: z.string().optional().nullable(),
-  reason: z.string().optional().nullable(),
-  file_url: z.string().optional().nullable(),
-});
 
 router.use(authenticateJWT, requireRole(["agent", "manager", "admin"]));
 
@@ -25,7 +16,8 @@ router.get("/me", asyncHandler(async (req: AuthRequest, res) => {
 }));
 
 router.get("/balances/me", asyncHandler(async (req: AuthRequest, res) => {
-  const year = Number(req.query.year) || new Date().getFullYear();
+  const parsed = leaveBalancesQuerySchema.safeParse(req.query);
+  const year = parsed.success && parsed.data.year ? parsed.data.year : new Date().getFullYear();
   const rows = await getBalancesForUser(req.user!.sub, year);
   const withAvailable = await Promise.all(
     rows.map(async (r) => {
@@ -37,7 +29,7 @@ router.get("/balances/me", asyncHandler(async (req: AuthRequest, res) => {
 }));
 
 router.post("/", requireRole(["agent"]), asyncHandler(async (req: AuthRequest, res) => {
-  const parsed = createSchema.safeParse(req.body);
+  const parsed = createLeaveBodySchema.safeParse(req.body);
   if (!parsed.success) {
     const msg = parsed.error.errors?.[0]?.message ?? "Validation failed";
     throw httpError(msg, 400);

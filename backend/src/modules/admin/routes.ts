@@ -1,10 +1,12 @@
 import { Router } from "express";
+import { Transform } from "stream";
 import multer from "multer";
 import QueryStream from "pg-query-stream";
 import { authenticateJWT, AuthRequest, requireRole } from "../../middleware/auth";
 import { query, runInTransaction, pool } from "../../db/pool";
 import { findUserByEmail } from "../users/userRepository";
-import { upsertSchedule, updateSchedule, batchUpsertSchedules } from "../schedules/repository";
+import { upsertSchedule, updateSchedule, batchUpsertSchedules, getSchedulesForAdmin } from "../schedules/repository";
+import { schedulePutBodySchema, scheduleBatchBodySchema } from "../schedules/schema";
 import { approveAgentAndSetTempPassword, setTempPasswordForUser } from "../auth/service";
 import { createNotification } from "../notifications/repository";
 import { getOpenAuxForUser, closeAux, createAux } from "../auxlogs/repository";
@@ -448,14 +450,42 @@ LEFT JOIN aux_agg ON aux_agg.user_id = grid.user_id AND aux_agg.date_str = grid.
 ORDER BY grid.first_name, grid.last_name, grid.date_str
 `;
 
+function dailyExportRowToCsv(parseInterval: (s: string) => number, escapeCsvFn: (s: string) => string) {
+  return new Transform({
+    objectMode: true,
+    transform(row: any, _enc: string, cb: (err?: Error | null, chunk?: string) => void) {
+      const dateStr = row.date_str ?? "";
+      const userName = [row.first_name, row.last_name].filter(Boolean).join(" ");
+      const login = row.clock_in ? new Date(row.clock_in).toISOString() : "";
+      const logout = row.clock_out ? new Date(row.clock_out).toISOString() : "";
+      const tardyMins = row.is_late && row.shift_start ? Math.max(0, Math.round((new Date(row.clock_in).getTime() - new Date(row.shift_start).getTime()) / 60000)) : 0;
+      const totalHoursStr = row.total_hours != null ? String(row.total_hours) : "";
+      const totalHoursSec = totalHoursStr ? parseInterval(totalHoursStr) : 0;
+      const overtimeMins = row.overtime_duration != null ? Math.round(parseInterval(String(row.overtime_duration)) / 60) : 0;
+      const earlyMins = row.is_early_logout && row.shift_end && row.clock_out ? Math.max(0, Math.round((new Date(row.shift_end).getTime() - new Date(row.clock_out).getTime()) / 60000)) : 0;
+      const leaveType = row.leave_type || (row.clock_in ? "present" : "absent");
+      const netHours = (totalHoursSec / 3600).toFixed(2);
+      const fbStart = row.first_break_start ? String(row.first_break_start).slice(11, 19) : "";
+      const fbEnd = row.first_break_end ? String(row.first_break_end).slice(11, 19) : "";
+      const lunchStart = row.lunch_start ? String(row.lunch_start).slice(11, 19) : "";
+      const lunchEnd = row.lunch_end ? String(row.lunch_end).slice(11, 19) : "";
+      const lbStart = row.last_break_start ? String(row.last_break_start).slice(11, 19) : "";
+      const lbEnd = row.last_break_end ? String(row.last_break_end).slice(11, 19) : "";
+      const overnightEligible = row.shift_end && new Date(row.shift_end).getUTCHours() >= 19 ? "Y" : "";
+      const transportEligible = row.clock_in ? "Y" : "";
+      const line = [dateStr, userName, login, fbStart, fbEnd, lunchStart, lunchEnd, lbStart, lbEnd, logout, tardyMins, overtimeMins, earlyMins, leaveType, row.first_break_over_limit ? "Y" : "", row.lunch_over_limit ? "Y" : "", row.last_break_over_limit ? "Y" : "", netHours, "", "", overnightEligible, transportEligible, row.aux_codes ?? ""].map(String).map(escapeCsvFn).join(",") + "\r\n";
+      cb(null, line);
+    },
+  });
+}
+
 router.get("/export/daily", async (req: AuthRequest, res) => {
   const today = new Date().toISOString().slice(0, 10);
   const from = (req.query.from as string)?.trim() || today;
   const to = (req.query.to as string)?.trim() || today;
-  const header = "Date,User Name,Login,First Break In,First Break Out,Lunch In,Lunch Out,Last Break In,Last Break Out,Logout,Tardy (mins),Overtime (mins),Early Leave (mins),Leave Type,1st Break Exceed,Lunch Exceed,Last Break Exceed,NetLoginHours,PreShiftOvertime,PostShiftOvertime,OvernightEligible,TransportEligible,Aux Codes With Time";
+  const header = "Date,User Name,Login,First Break In,First Break Out,Lunch In,Lunch Out,Last Break In,Last Break Out,Logout,Tardy (mins),Overtime (mins),Early Leave (mins),Leave Type,1st Break Exceed,Lunch Exceed,Last Break Exceed,NetLoginHours,PreShiftOvertime,PostShiftOvertime,OvernightEligible,TransportEligible,Aux Codes With Time\r\n";
   res.setHeader("Content-Type", "text/csv");
   res.setHeader("Content-Disposition", `attachment; filename=daily-agents-${from}-${to}.csv`);
-  res.write(header + "\r\n");
 
   let client;
   try {
@@ -464,39 +494,17 @@ router.get("/export/daily", async (req: AuthRequest, res) => {
     return res.status(400).json({ error: { message: err.message || "Export failed" } });
   }
   const stream = client.query(new QueryStream(DAILY_EXPORT_SQL, [from, to]));
+  const csvTransform = dailyExportRowToCsv(parseInterval, escapeCsv);
 
-  stream.on("data", (row: any) => {
-    const dateStr = row.date_str ?? "";
-    const userName = [row.first_name, row.last_name].filter(Boolean).join(" ");
-    const login = row.clock_in ? new Date(row.clock_in).toISOString() : "";
-    const logout = row.clock_out ? new Date(row.clock_out).toISOString() : "";
-    const tardyMins = row.is_late && row.shift_start ? Math.max(0, Math.round((new Date(row.clock_in).getTime() - new Date(row.shift_start).getTime()) / 60000)) : 0;
-    const totalHoursStr = row.total_hours != null ? String(row.total_hours) : "";
-    const totalHoursSec = totalHoursStr ? parseInterval(totalHoursStr) : 0;
-    const overtimeMins = row.overtime_duration != null ? Math.round(parseInterval(String(row.overtime_duration)) / 60) : 0;
-    const earlyMins = row.is_early_logout && row.shift_end && row.clock_out ? Math.max(0, Math.round((new Date(row.shift_end).getTime() - new Date(row.clock_out).getTime()) / 60000)) : 0;
-    const leaveType = row.leave_type || (row.clock_in ? "present" : "absent");
-    const netHours = (totalHoursSec / 3600).toFixed(2);
-    const fbStart = row.first_break_start ? String(row.first_break_start).slice(11, 19) : "";
-    const fbEnd = row.first_break_end ? String(row.first_break_end).slice(11, 19) : "";
-    const lunchStart = row.lunch_start ? String(row.lunch_start).slice(11, 19) : "";
-    const lunchEnd = row.lunch_end ? String(row.lunch_end).slice(11, 19) : "";
-    const lbStart = row.last_break_start ? String(row.last_break_start).slice(11, 19) : "";
-    const lbEnd = row.last_break_end ? String(row.last_break_end).slice(11, 19) : "";
-    const overnightEligible = row.shift_end && new Date(row.shift_end).getUTCHours() >= 19 ? "Y" : "";
-    const transportEligible = row.clock_in ? "Y" : "";
-    const line = [dateStr, userName, login, fbStart, fbEnd, lunchStart, lunchEnd, lbStart, lbEnd, logout, tardyMins, overtimeMins, earlyMins, leaveType, row.first_break_over_limit ? "Y" : "", row.lunch_over_limit ? "Y" : "", row.last_break_over_limit ? "Y" : "", netHours, "", "", overnightEligible, transportEligible, row.aux_codes ?? ""].map(String).map(escapeCsv).join(",");
-    res.write(line + "\r\n");
-  });
-  stream.on("end", () => {
-    client.release();
-    res.end();
-  });
+  stream.on("end", () => client.release());
   stream.on("error", (err: Error) => {
     client.release();
     if (!res.headersSent) res.status(400).json({ error: { message: err.message || "Export failed" } });
     else res.end();
   });
+
+  res.write(header);
+  stream.pipe(csvTransform).pipe(res);
 });
 
 function parseInterval(s: string): number {
@@ -510,17 +518,8 @@ router.get("/schedules", async (req: AuthRequest, res) => {
     const from = req.query.from as string;
     const to = req.query.to as string;
     const userId = req.query.user_id as string | undefined;
-    if (!from || !to) {
-      return res.status(400).json({ error: { message: "from and to (YYYY-MM-DD) required" } });
-    }
-    let sql = `SELECT s.*, u.first_name, u.last_name, u.email FROM schedules s JOIN users u ON s.user_id = u.id WHERE s.date >= $1 AND s.date <= $2`;
-    const params: any[] = [from, to];
-    if (userId) {
-      params.push(userId);
-      sql += ` AND s.user_id = $3`;
-    }
-    sql += ` ORDER BY s.date, u.first_name`;
-    const { rows } = await query(sql, params);
+    if (!from || !to) return res.status(400).json({ error: { message: "from and to (YYYY-MM-DD) required" } });
+    const rows = await getSchedulesForAdmin(from, to, userId);
     return res.json(rows);
   } catch (err: any) {
     return res.status(400).json({ error: { message: err.message || "Failed" } });
@@ -578,11 +577,12 @@ router.post("/schedules/import", upload.single("file"), async (req: AuthRequest,
 });
 
 router.post("/schedules/batch", async (req: AuthRequest, res) => {
-  const body = req.body as { schedules?: Array<{ user_id: string; date: string; shift_start?: string | null; shift_end?: string | null; day_type?: string; project_id?: string | null; break_1_start?: string | null; break_1_end?: string | null; break_2_start?: string | null; break_2_end?: string | null; break_3_start?: string | null; break_3_end?: string | null }> };
-  const list = body.schedules;
-  if (!Array.isArray(list) || list.length === 0) {
-    return res.status(400).json({ error: { message: "schedules array required and must not be empty" } });
+  const parsed = scheduleBatchBodySchema.safeParse(req.body);
+  if (!parsed.success) {
+    const msg = parsed.error.errors?.[0]?.message ?? "Validation failed";
+    return res.status(400).json({ error: { message: msg } });
   }
+  const list = parsed.data.schedules;
   const items = list.map((s) => ({
     userId: s.user_id,
     date: s.date,
@@ -606,38 +606,24 @@ router.post("/schedules/batch", async (req: AuthRequest, res) => {
 });
 
 router.put("/schedules", async (req: AuthRequest, res) => {
-  const body = req.body as {
-    id?: string;
-    version?: number;
-    user_id?: string;
-    date?: string;
-    project_id?: string | null;
-    shift_start?: string | null;
-    shift_end?: string | null;
-    break_1_start?: string | null;
-    break_1_end?: string | null;
-    break_2_start?: string | null;
-    break_2_end?: string | null;
-    break_3_start?: string | null;
-    break_3_end?: string | null;
-    day_type?: string;
-  };
-  const { id, version, user_id, date, shift_start, shift_end, day_type } = body;
-  if (!user_id || !date) {
-    return res.status(400).json({ error: { message: "user_id and date required" } });
+  const parsed = schedulePutBodySchema.safeParse(req.body);
+  if (!parsed.success) {
+    const msg = parsed.error.errors?.[0]?.message ?? "Validation failed";
+    return res.status(400).json({ error: { message: msg } });
   }
+  const { id, version, user_id, date, shift_start, shift_end, day_type } = parsed.data;
   const params = {
     userId: user_id,
     date,
-    projectId: body.project_id ?? null,
+    projectId: parsed.data.project_id ?? null,
     shiftStart: shift_start ?? null,
     shiftEnd: shift_end ?? null,
-    break1Start: body.break_1_start ?? null,
-    break1End: body.break_1_end ?? null,
-    break2Start: body.break_2_start ?? null,
-    break2End: body.break_2_end ?? null,
-    break3Start: body.break_3_start ?? null,
-    break3End: body.break_3_end ?? null,
+    break1Start: parsed.data.break_1_start ?? null,
+    break1End: parsed.data.break_1_end ?? null,
+    break2Start: parsed.data.break_2_start ?? null,
+    break2End: parsed.data.break_2_end ?? null,
+    break3Start: parsed.data.break_3_start ?? null,
+    break3End: parsed.data.break_3_end ?? null,
     dayType: day_type || "work",
   };
   try {

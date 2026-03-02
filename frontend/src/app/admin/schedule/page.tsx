@@ -4,6 +4,7 @@ import { useEffect, useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { useAuthStore } from "../../../lib/authStore";
 import { apiRequest } from "../../../lib/api";
+import { toast } from "../../../lib/toast";
 
 interface UserRow {
   id: string;
@@ -209,6 +210,7 @@ export default function AdminSchedulePage() {
     } catch (e) {
       const msg = (e as Error).message;
       if (msg.includes("updated by someone else") || msg.includes("Conflict")) {
+        toast.error("Schedule modified by another user. Please refresh.");
         const res = await apiRequest<ScheduleRow[]>(`/admin/schedules?from=${from}&to=${to}`, {}, token);
         setSchedules(res);
         setEditCell(null);

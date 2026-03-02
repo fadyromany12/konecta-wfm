@@ -63,6 +63,24 @@ export async function getTeamSchedulesByManager(
   return rows;
 }
 
+/** Admin: list schedules in date range, optional filter by user_id. */
+export async function getSchedulesForAdmin(
+  from: string,
+  to: string,
+  userId?: string,
+  client?: PoolClient,
+): Promise<(ScheduleRow & { first_name?: string; last_name?: string; email?: string })[]> {
+  let sql = `SELECT s.*, u.first_name, u.last_name, u.email FROM schedules s JOIN users u ON s.user_id = u.id WHERE s.date >= $1 AND s.date <= $2`;
+  const params: (string | number)[] = [from, to];
+  if (userId) {
+    params.push(userId);
+    sql += ` AND s.user_id = $3`;
+  }
+  sql += ` ORDER BY s.date, u.first_name`;
+  const { rows } = await query(sql, params, client);
+  return rows;
+}
+
 export type ScheduleUpsertParams = {
   userId: string;
   date: string;

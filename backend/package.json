@@ -8,7 +8,8 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
     "setup-db": "node scripts/setup-db.js",
-    "migrate:acid": "node scripts/run-migration.js sql/migrations_acid_occ_exceptions.sql"
+    "migrate:acid": "node scripts/run-migration.js sql/migrations_acid_occ_exceptions.sql",
+    "migrate:enterprise": "node scripts/run-migration.js sql/migrations_enterprise_fixes.sql"
   },
   "keywords": [],
   "author": "",

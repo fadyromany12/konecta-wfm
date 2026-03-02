@@ -24,23 +24,15 @@ export async function clockIn(userId: string, workLocation?: "WFH" | "WFO"): Pro
     const openDateStr = formatDateInTimezone(open.clock_in, tz);
     const openClockIn = new Date(open.clock_in);
     const hoursOpen = (now.getTime() - openClockIn.getTime()) / (3600 * 1000);
-    const isLikelyNightShift =
-      openDateStr < todayStr && hoursOpen < FORGOTTEN_CLOCK_IN_HOURS;
-    if (isLikelyNightShift) {
-      throw new Error("You are already clocked in. If you meant to start a new day, ask your manager to close your previous session.");
+    if (openDateStr === todayStr) {
+      throw new Error("You are already clocked in.");
+    }
+    if (openDateStr < todayStr && hoursOpen >= FORGOTTEN_CLOCK_IN_HOURS) {
+      await updateAttendanceStatus(open.id, "ANOMALY");
+      throw new Error("Previous clock-in was left open over 16 hours and has been marked as an anomaly. Contact your manager to resolve before clocking in again.");
     }
     if (openDateStr < todayStr) {
-      const endOfPrevDay = new Date(openDateStr + "T23:59:59.999Z");
-      const workedSeconds = Math.max(0, Math.floor((endOfPrevDay.getTime() - openClockIn.getTime()) / 1000));
-      await closeAttendanceSession({
-        id: open.id,
-        clockOut: endOfPrevDay,
-        totalHours: `${workedSeconds} seconds`,
-        isEarlyLogout: true,
-        overtimeDuration: "0 seconds",
-      });
-    } else {
-      throw new Error("You are already clocked in.");
+      throw new Error("You are already clocked in. If you meant to start a new day, ask your manager to close your previous session.");
     }
   }
 
