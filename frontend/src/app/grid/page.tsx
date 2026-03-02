@@ -207,14 +207,18 @@ export default function ActivityGridPage() {
                     {u.violations.length > 0 && (
                       <div className="mt-1 flex flex-wrap gap-1">
                         {u.violations.map((v, i) => (
-                          <span key={i} className="rounded bg-amber-500/20 px-1.5 py-0.5 text-[10px] text-amber-400">
+                          <span
+                            key={i}
+                            title={v.description}
+                            className={`rounded px-1.5 py-0.5 text-[10px] ${["weekly_hours", "min_rest"].includes(v.type) ? "bg-red-500/20 text-red-400" : "bg-amber-500/20 text-amber-400"}`}
+                          >
                             {v.type}
                           </span>
                         ))}
                       </div>
                     )}
                   </div>
-                  <div className="relative flex-1 overflow-visible rounded bg-slate-900/60" style={{ minWidth: 540, height: 44 }}>
+                  <div className="relative flex-1 overflow-visible rounded bg-slate-900/60" style={{ minWidth: 540, height: 64 }}>
                     {u.events.length === 0 ? (
                       <p className="absolute inset-0 flex items-center justify-center text-xs text-slate-500">No events</p>
                     ) : (
@@ -232,7 +236,7 @@ export default function ActivityGridPage() {
                           <motion.div
                             key={i}
                             layout
-                            className={`absolute top-1 bottom-1 rounded border py-0.5 px-1.5 text-[10px] font-medium text-white shadow-sm transition-transform duration-200 z-10 ${color} ${isHovered ? "scale-110 ring-2 ring-white/40" : "hover:scale-105"}`}
+                            className={`absolute top-1.5 bottom-1.5 rounded border py-1 px-2 text-[10px] font-medium text-white shadow-sm transition-transform duration-200 z-10 ${color} ${isHovered ? "scale-110 ring-2 ring-white/40" : "hover:scale-105"}`}
                             style={{
                               left: `${Math.max(0, left)}%`,
                               width: `${Math.min(width, 100 - left)}%`,

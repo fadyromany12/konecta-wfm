@@ -1,23 +1,30 @@
-import { Router } from "express";
+import { Router, Response, NextFunction } from "express";
 import { Transform } from "stream";
 import multer from "multer";
 import QueryStream from "pg-query-stream";
 import { authenticateJWT, AuthRequest, requireRole } from "../../middleware/auth";
 import { query, runInTransaction, pool } from "../../db/pool";
 import { findUserByEmail } from "../users/userRepository";
-import { upsertSchedule, updateSchedule, batchUpsertSchedules, getSchedulesForAdmin } from "../schedules/repository";
+import { upsertSchedule, updateSchedule, updateScheduleForce, batchUpsertSchedules, getSchedulesForAdmin, getScheduleById, deleteSchedulesInRange } from "../schedules/repository";
 import { schedulePutBodySchema, scheduleBatchBodySchema } from "../schedules/schema";
 import { approveAgentAndSetTempPassword, setTempPasswordForUser } from "../auth/service";
 import { createNotification } from "../notifications/repository";
 import { getOpenAuxForUser, closeAux, createAux } from "../auxlogs/repository";
 import { dateRangeArray, daysAgo } from "../../utils/dateHelpers";
+import { logAudit } from "../../lib/audit";
 import { getBalance, getBalancesForUser, setBalance } from "../leaveBalances/repository";
 import { hasLockedAttendanceForUserAndDate, getAttendanceById } from "../attendance/repository";
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage() });
 
-router.use(authenticateJWT, requireRole(["admin"]));
+router.use(authenticateJWT);
+
+router.use((req: AuthRequest, res: Response, next: NextFunction) => {
+  const path = (req.path || req.originalUrl || "").toLowerCase();
+  const allowRta = path.includes("schedule") || (req.method === "GET" && path.includes("users"));
+  return (allowRta ? requireRole(["admin", "rta"]) : requireRole(["admin"]))(req, res, next);
+});
 
 router.get("/users", async (req: AuthRequest, res) => {
   try {
@@ -25,7 +32,7 @@ router.get("/users", async (req: AuthRequest, res) => {
     const limit = Math.min(Math.max(1, Number(req.query.limit) || 100), 500);
     const offset = (page - 1) * limit;
     const { rows } = await query(
-      `SELECT id, first_name, last_name, email, role, status, manager_id, is_approved, role_id, created_at, offboarded_at, offboarding_reason FROM users ORDER BY created_at DESC LIMIT $1 OFFSET $2`,
+      `SELECT id, first_name, last_name, email, role, status, manager_id, is_approved, role_id, created_at FROM users ORDER BY created_at DESC LIMIT $1 OFFSET $2`,
       [limit, offset],
     );
     const { rows: countRows } = await query<{ count: string }>(`SELECT count(*) AS count FROM users`);
@@ -41,10 +48,15 @@ router.post("/users/:id/offboard", async (req: AuthRequest, res) => {
   const { reason } = req.body as { reason?: string };
   try {
     const { rowCount } = await query(
-      `UPDATE users SET status = 'inactive', offboarded_at = now(), offboarding_reason = $2, updated_at = now() WHERE id = $1 AND role = 'agent'`,
-      [id, reason ?? null],
+      `UPDATE users SET status = 'inactive', updated_at = now() WHERE id = $1 AND role = 'agent'`,
+      [id],
     );
     if ((rowCount ?? 0) === 0) return res.status(404).json({ error: { message: "Agent not found" } });
+    try {
+      await query(`UPDATE users SET offboarded_at = now(), offboarding_reason = $2 WHERE id = $1`, [id, reason ?? null]);
+    } catch {
+      /* optional columns from migrations_offboarding.sql */
+    }
     return res.json({ message: "Agent offboarded" });
   } catch (err: any) {
     return res.status(400).json({ error: { message: err.message || "Offboard failed" } });
@@ -198,9 +210,34 @@ router.patch("/users/:userId/role", async (req: AuthRequest, res) => {
       [userId, roleId],
     );
     if (!rows.length) return res.status(404).json({ error: { message: "User not found" } });
+    await logAudit("role.assign", req.user!.sub, { target_user_id: userId, role_id: roleId, role_name: rows[0].role }, req.ip);
     return res.json(rows[0]);
   } catch (err: any) {
     return res.status(400).json({ error: { message: err.message || "Failed" } });
+  }
+});
+
+router.patch("/users/:userId", async (req: AuthRequest, res) => {
+  const { userId } = req.params;
+  const { manager_id: managerId } = req.body as { manager_id?: string | null };
+  try {
+    if (managerId !== undefined) {
+      if (managerId !== null && managerId === userId) {
+        return res.status(400).json({ error: { message: "User cannot be their own manager" } });
+      }
+      const { rowCount } = await query(
+        `UPDATE users SET manager_id = $2, updated_at = now() WHERE id = $1`,
+        [userId, managerId || null],
+      );
+      if ((rowCount ?? 0) === 0) return res.status(404).json({ error: { message: "User not found" } });
+    }
+    const { rows } = await query(
+      `SELECT id, first_name, last_name, email, role, status, manager_id, is_approved, created_at FROM users WHERE id = $1`,
+      [userId],
+    );
+    return res.json(rows[0] || {});
+  } catch (err: any) {
+    return res.status(400).json({ error: { message: err.message || "Update failed" } });
   }
 });
 
@@ -599,6 +636,7 @@ router.post("/schedules/batch", async (req: AuthRequest, res) => {
   }));
   try {
     const result = await runInTransaction((client) => batchUpsertSchedules(items, client));
+    await logAudit("schedule.batch", req.user!.sub, { inserted: result.inserted, updated: result.updated }, req.ip);
     return res.json({ inserted: result.inserted, updated: result.updated });
   } catch (err: any) {
     return res.status(400).json({ error: { message: err.message || "Batch update failed" } });
@@ -611,7 +649,7 @@ router.put("/schedules", async (req: AuthRequest, res) => {
     const msg = parsed.error.errors?.[0]?.message ?? "Validation failed";
     return res.status(400).json({ error: { message: msg } });
   }
-  const { id, version, user_id, date, shift_start, shift_end, day_type } = parsed.data;
+  const { id, version, force_overwrite, user_id, date, shift_start, shift_end, day_type } = parsed.data;
   const params = {
     userId: user_id,
     date,
@@ -627,14 +665,95 @@ router.put("/schedules", async (req: AuthRequest, res) => {
     dayType: day_type || "work",
   };
   try {
+    if (id != null && force_overwrite) {
+      const row = await updateScheduleForce(id, params);
+      await logAudit("schedule.update", req.user!.sub, { schedule_id: row.id, user_id: params.userId, date: params.date, force_overwrite: true }, req.ip);
+      return res.json(row);
+    }
     if (id != null && version != null) {
       const row = await updateSchedule(id, version, params);
+      await logAudit("schedule.update", req.user!.sub, { schedule_id: row.id, user_id: params.userId, date: params.date }, req.ip);
       return res.json(row);
     }
     const row = await upsertSchedule(params);
+    await logAudit("schedule.update", req.user!.sub, { schedule_id: row.id, user_id: params.userId, date: params.date }, req.ip);
     return res.json(row);
   } catch (err: any) {
-    if (err?.message === "CONFLICT") return res.status(409).json({ error: { message: "Schedule was updated by someone else; refresh and try again." } });
+    if (err?.message === "CONFLICT" && id) {
+      const serverSchedule = await getScheduleById(id);
+      return res.status(409).json({
+        error: { message: "Schedule was updated by someone else. Refresh to see changes or force overwrite with your version." },
+        server_schedule: serverSchedule ?? null,
+      });
+    }
+    return res.status(400).json({ error: { message: err.message || "Failed" } });
+  }
+});
+
+/** Publish schedule for a date range (audit only; optional future: set published_at). */
+router.post("/schedules/publish", async (req: AuthRequest, res) => {
+  const { from, to } = req.body as { from?: string; to?: string };
+  if (!from || !to) return res.status(400).json({ error: { message: "from and to (YYYY-MM-DD) required" } });
+  try {
+    await logAudit("schedule.publish", req.user!.sub, { from, to }, req.ip);
+    return res.json({ message: "Schedule published", from, to });
+  } catch (err: any) {
+    return res.status(400).json({ error: { message: err.message || "Failed" } });
+  }
+});
+
+/** Clear all schedules in date range. */
+router.post("/schedules/clear", async (req: AuthRequest, res) => {
+  const { from, to } = req.body as { from?: string; to?: string };
+  if (!from || !to) return res.status(400).json({ error: { message: "from and to (YYYY-MM-DD) required" } });
+  try {
+    const deleted = await runInTransaction((client) => deleteSchedulesInRange(from, to, client));
+    await logAudit("schedule.clear", req.user!.sub, { from, to, deleted }, req.ip);
+    return res.json({ deleted });
+  } catch (err: any) {
+    return res.status(400).json({ error: { message: err.message || "Failed" } });
+  }
+});
+
+/** Copy previous week: copy schedules from (from-7, to-7) into (from, to). */
+router.post("/schedules/copy-week", async (req: AuthRequest, res) => {
+  const { from, to } = req.body as { from?: string; to?: string };
+  if (!from || !to) return res.status(400).json({ error: { message: "from and to (YYYY-MM-DD) required" } });
+  const fromPrev = new Date(from + "T12:00:00");
+  fromPrev.setDate(fromPrev.getDate() - 7);
+  const toPrev = new Date(to + "T12:00:00");
+  toPrev.setDate(toPrev.getDate() - 7);
+  const fromPrevStr = fromPrev.toISOString().slice(0, 10);
+  const toPrevStr = toPrev.toISOString().slice(0, 10);
+  try {
+    const result = await runInTransaction(async (client) => {
+      const rows = await getSchedulesForAdmin(fromPrevStr, toPrevStr, undefined, client);
+      const items = rows.map((row) => {
+        const d = new Date(row.date + "T12:00:00");
+        d.setDate(d.getDate() + 7);
+        const newDate = d.toISOString().slice(0, 10);
+        const shiftStart = row.shift_start ? (newDate + "T" + String(row.shift_start).slice(11, 19)) : null;
+        const shiftEnd = row.shift_end ? (newDate + "T" + String(row.shift_end).slice(11, 19)) : null;
+        return {
+          userId: row.user_id,
+          date: newDate,
+          projectId: row.project_id ?? null,
+          shiftStart,
+          shiftEnd,
+          break1Start: row.break_1_start ?? null,
+          break1End: row.break_1_end ?? null,
+          break2Start: row.break_2_start ?? null,
+          break2End: row.break_2_end ?? null,
+          break3Start: row.break_3_start ?? null,
+          break3End: row.break_3_end ?? null,
+          dayType: row.day_type || "work",
+        };
+      });
+      return batchUpsertSchedules(items, client);
+    });
+    await logAudit("schedule.copy_week", req.user!.sub, { from, to, inserted: result.inserted, updated: result.updated }, req.ip);
+    return res.json({ inserted: result.inserted, updated: result.updated });
+  } catch (err: any) {
     return res.status(400).json({ error: { message: err.message || "Failed" } });
   }
 });

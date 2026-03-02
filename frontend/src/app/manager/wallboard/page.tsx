@@ -43,9 +43,25 @@ export default function ManagerWallboardPage() {
       router.replace("/");
       return;
     }
+    const apiBase = typeof window !== "undefined" ? "/api/proxy" : "";
+    const streamUrl = `${apiBase}/wallboard/stream?token=${encodeURIComponent(token)}`;
+    let eventSource: EventSource | null = null;
+    try {
+      eventSource = new EventSource(streamUrl);
+      eventSource.onmessage = (e) => {
+        try {
+          const d = JSON.parse(e.data) as WallboardData;
+          if (!d.error) setData(d);
+        } catch { /* ignore */ }
+        setLoading(false);
+      };
+    } catch { /* fallback to polling */ }
     load();
-    const t = setInterval(load, 30000);
-    return () => clearInterval(t);
+    const fallback = setInterval(load, 30000);
+    return () => {
+      eventSource?.close();
+      clearInterval(fallback);
+    };
   }, [user, token, router]);
 
   async function load() {

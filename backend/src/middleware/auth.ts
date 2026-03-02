@@ -13,14 +13,16 @@ export interface AuthRequest extends Request {
   user?: AuthPayload;
 }
 
-export function authenticateJWT(req: AuthRequest, res: Response, next: NextFunction) {
+function getToken(req: Request): string | null {
   const authHeader = req.headers.authorization;
-  if (!authHeader?.startsWith("Bearer ")) {
-    return res.status(401).json({ error: { message: "Missing authorization header" } });
-  }
+  if (authHeader?.startsWith("Bearer ")) return authHeader.split(" ")[1];
+  const q = req.query as { token?: string };
+  return q.token && typeof q.token === "string" ? q.token : null;
+}
 
-  const token = authHeader.split(" ")[1];
-
+export function authenticateJWT(req: AuthRequest, res: Response, next: NextFunction) {
+  const token = getToken(req);
+  if (!token) return res.status(401).json({ error: { message: "Missing authorization header" } });
   try {
     const payload = jwt.verify(token, env.jwtSecret) as AuthPayload;
     req.user = payload;

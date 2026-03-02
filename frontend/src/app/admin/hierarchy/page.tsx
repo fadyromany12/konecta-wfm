@@ -74,8 +74,9 @@ export default function AdminHierarchyPage() {
     setLoading(true);
     setError(null);
     try {
-      const res = await apiRequest<TreeNode[]>("/manager/org-tree", {}, token);
-      setTree(Array.isArray(res) ? res : []);
+      const res = await apiRequest<TreeNode[] | { data?: TreeNode[] }>("/manager/org-tree", {}, token);
+      const list = Array.isArray(res) ? res : (res?.data ?? []);
+      setTree(Array.isArray(list) ? list : []);
     } catch {
       setTree([]);
       setError("Failed to load hierarchy");

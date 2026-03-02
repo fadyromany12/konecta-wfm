@@ -164,10 +164,47 @@ export async function updateSchedule(
   return rows[0];
 }
 
-/** Get by id (for OCC check). */
+/** Get by id (for OCC check / 409 diff). */
 export async function getScheduleById(id: string, client?: PoolClient): Promise<ScheduleRow | null> {
   const { rows } = await query<ScheduleRow>(`SELECT * FROM schedules WHERE id = $1`, [id], client);
   return rows[0] || null;
+}
+
+/** Update by id without version check (force overwrite). Used when user confirms overwrite after 409. */
+export async function updateScheduleForce(id: string, params: ScheduleUpsertParams, client?: PoolClient): Promise<ScheduleRow> {
+  const { rows } = await query<ScheduleRow>(
+    `UPDATE schedules SET
+       project_id = COALESCE($2, project_id),
+       shift_start = $3,
+       shift_end = $4,
+       break_1_start = $5,
+       break_1_end = $6,
+       break_2_start = $7,
+       break_2_end = $8,
+       break_3_start = $9,
+       break_3_end = $10,
+       day_type = $11,
+       version = version + 1,
+       updated_at = now()
+     WHERE id = $1
+     RETURNING *`,
+    [
+      id,
+      params.projectId ?? null,
+      params.shiftStart,
+      params.shiftEnd,
+      params.break1Start ?? null,
+      params.break1End ?? null,
+      params.break2Start ?? null,
+      params.break2End ?? null,
+      params.break3Start ?? null,
+      params.break3End ?? null,
+      params.dayType,
+    ],
+    client,
+  );
+  if (!rows[0]) throw new Error("Schedule not found");
+  return rows[0];
 }
 
 /** Upsert: if row exists for (user_id, date) then update with OCC; else insert. For single-row use. */
@@ -197,4 +234,14 @@ export async function batchUpsertSchedules(
     }
   }
   return { updated, inserted };
+}
+
+/** Delete all schedules in date range. Returns deleted count. */
+export async function deleteSchedulesInRange(from: string, to: string, client?: PoolClient): Promise<number> {
+  const { rowCount } = await query(
+    `DELETE FROM schedules WHERE date >= $1 AND date <= $2`,
+    [from, to],
+    client,
+  );
+  return rowCount ?? 0;
 }

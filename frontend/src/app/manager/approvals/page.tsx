@@ -39,6 +39,7 @@ export default function ManagerApprovalsPage() {
   const [leave, setLeave] = useState<LeaveItem[]>([]);
   const [swaps, setSwaps] = useState<SwapItem[]>([]);
   const [leaveHistory, setLeaveHistory] = useState<LeaveItem[]>([]);
+  const [swapHistory, setSwapHistory] = useState<SwapItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [rejectLeaveId, setRejectLeaveId] = useState<string | null>(null);
   const [rejectSwapId, setRejectSwapId] = useState<string | null>(null);
@@ -59,18 +60,25 @@ export default function ManagerApprovalsPage() {
     if (!token) return;
     setLoading(true);
     try {
-      const [l, s, teamLeave] = await Promise.all([
-        apiRequest<LeaveItem[]>("/manager/leave/pending", {}, token),
-        apiRequest<SwapItem[]>("/shift-swaps/manager/pending", {}, token),
-        apiRequest<LeaveItem[]>("/manager/leave/team", {}, token),
+      const [l, s, teamLeave, teamSwaps] = await Promise.all([
+        apiRequest<LeaveItem[] | { data?: LeaveItem[] }>("/manager/leave/pending", {}, token),
+        apiRequest<SwapItem[] | { data?: SwapItem[] }>("/shift-swaps/manager/pending", {}, token),
+        apiRequest<LeaveItem[] | { data?: LeaveItem[] }>("/manager/leave/team", {}, token),
+        apiRequest<SwapItem[] | { data?: SwapItem[] }>("/shift-swaps/manager/team", {}, token),
       ]);
-      setLeave(l);
-      setSwaps(s);
-      setLeaveHistory((teamLeave || []).filter((r) => r.status !== "pending"));
+      const leaveList = Array.isArray(l) ? l : (l as { data?: LeaveItem[] })?.data ?? [];
+      const swapList = Array.isArray(s) ? s : (s as { data?: SwapItem[] })?.data ?? [];
+      const teamLeaveList = Array.isArray(teamLeave) ? teamLeave : (teamLeave as { data?: LeaveItem[] })?.data ?? [];
+      const teamSwapList = Array.isArray(teamSwaps) ? teamSwaps : (teamSwaps as { data?: SwapItem[] })?.data ?? [];
+      setLeave(leaveList);
+      setSwaps(swapList);
+      setLeaveHistory((teamLeaveList || []).filter((r) => r.status !== "pending"));
+      setSwapHistory((teamSwapList || []).filter((sw) => sw.manager_approval !== "pending"));
     } catch {
       setLeave([]);
       setSwaps([]);
       setLeaveHistory([]);
+      setSwapHistory([]);
     } finally {
       setLoading(false);
     }
@@ -156,6 +164,17 @@ export default function ManagerApprovalsPage() {
         >
           Shift swaps ({swaps.length})
         </button>
+        <button
+          type="button"
+          onClick={() => setTab("swapsHistory")}
+          className={`rounded-xl px-4 py-2.5 text-sm font-medium transition-all ${
+            tab === "swapsHistory"
+              ? "bg-brand text-white shadow-lg shadow-brand/25"
+              : "text-slate-400 hover:bg-slate-800 hover:text-slate-200"
+          }`}
+        >
+          Swap history
+        </button>
       </div>
 
       <ConfirmDialog
@@ -207,6 +226,33 @@ export default function ManagerApprovalsPage() {
               {leaveHistory.length === 0 && (
                 <tr>
                   <td colSpan={5} className="py-12 text-center text-slate-500">No leave history yet.</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      ) : tab === "swapsHistory" ? (
+        <div className="card overflow-auto">
+          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-slate-400">Swap history (approved / rejected)</h2>
+          <table className="w-full border-collapse text-sm">
+            <thead>
+              <tr className="border-b border-slate-700 text-left text-slate-400">
+                <th className="p-2">Date</th>
+                <th className="p-2">Reason</th>
+                <th className="p-2">Your decision</th>
+              </tr>
+            </thead>
+            <tbody>
+              {swapHistory.map((s) => (
+                <tr key={s.id} className="border-b border-slate-800">
+                  <td className="p-2">{s.date}</td>
+                  <td className="p-2 max-w-xs truncate">{s.reason || "-"}</td>
+                  <td className="p-2 capitalize">{s.manager_approval === "approved" ? "Approved" : s.manager_approval === "rejected" ? "Rejected" : s.manager_approval || "-"}</td>
+                </tr>
+              ))}
+              {swapHistory.length === 0 && (
+                <tr>
+                  <td colSpan={3} className="py-12 text-center text-slate-500">No swap history yet.</td>
                 </tr>
               )}
             </tbody>

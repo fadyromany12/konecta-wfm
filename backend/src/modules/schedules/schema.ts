@@ -8,6 +8,7 @@ export const scheduleQuerySchema = z.object({
 export const schedulePutBodySchema = z.object({
   id: z.string().uuid().optional(),
   version: z.number().int().positive().optional(),
+  force_overwrite: z.boolean().optional(),
   user_id: z.string().uuid(),
   date: z.string(),
   project_id: z.string().uuid().nullable().optional(),

@@ -134,6 +134,7 @@ export async function rejectTransfer(id: string, approverId: string, isAdmin: bo
 
 export function buildOrgTree(users: { id: string; manager_id: string | null }[], rootManagerId: string | null) {
   const byManager = new Map<string | null, typeof users>();
+  const userIds = new Set(users.map((u) => u.id));
   for (const u of users) {
     const key = u.manager_id ?? null;
     if (!byManager.has(key)) byManager.set(key, []);
@@ -143,7 +144,12 @@ export function buildOrgTree(users: { id: string; manager_id: string | null }[],
     const children = byManager.get(managerId) || [];
     return children.map((u) => ({ ...u, children: build(u.id) }));
   };
-  return build(rootManagerId);
+  let roots = build(rootManagerId);
+  if (roots.length === 0 && users.length > 0 && rootManagerId === null) {
+    const topLevel = users.filter((u) => !u.manager_id || !userIds.has(u.manager_id));
+    roots = topLevel.map((u) => ({ ...u, children: build(u.id) }));
+  }
+  return roots;
 }
 
 export async function createTransfer(agentId: string, fromManagerId: string, toManagerId: string) {

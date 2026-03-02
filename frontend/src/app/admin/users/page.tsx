@@ -24,6 +24,14 @@ interface RoleOption {
   description: string | null;
 }
 
+interface ManagerOption {
+  id: string;
+  first_name: string;
+  last_name: string;
+  email: string;
+  role: string;
+}
+
 export default function AdminUsersPage() {
   const router = useRouter();
   const user = useAuthStore((s) => s.user);
@@ -31,9 +39,11 @@ export default function AdminUsersPage() {
   const [users, setUsers] = useState<UserRow[]>([]);
   const [total, setTotal] = useState(0);
   const [roles, setRoles] = useState<RoleOption[]>([]);
+  const [managers, setManagers] = useState<ManagerOption[]>([]);
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState("");
   const [updatingRoleId, setUpdatingRoleId] = useState<string | null>(null);
+  const [updatingManagerId, setUpdatingManagerId] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const limit = 50;
 
@@ -53,15 +63,18 @@ export default function AdminUsersPage() {
     if (!token) return;
     setLoading(true);
     try {
-      const [data, rolesRes] = await Promise.all([
+      const [data, rolesRes, managersRes] = await Promise.all([
         apiRequest<{ data?: UserRow[]; total?: number; items?: UserRow[] } | UserRow[]>("/admin/users?page=" + page + "&limit=" + limit, {}, token),
         apiRequest<{ roles: RoleOption[] }>("/admin/roles", {}, token),
+        apiRequest<ManagerOption[] | { data?: ManagerOption[] }>("/manager/managers-list", {}, token),
       ]);
       const list = Array.isArray(data) ? data : (data && (data.data ?? data.items ?? []));
       const totalCount = Array.isArray(data) ? data.length : (data && typeof data.total === "number" ? data.total : 0);
       setUsers(Array.isArray(list) ? list : []);
       setTotal(totalCount);
       setRoles((rolesRes as { roles?: RoleOption[] })?.roles || []);
+      const mgrList = Array.isArray(managersRes) ? managersRes : (managersRes as { data?: ManagerOption[] })?.data ?? [];
+      setManagers(Array.isArray(mgrList) ? mgrList : []);
     } catch {
       setUsers([]);
       setTotal(0);
@@ -83,6 +96,19 @@ export default function AdminUsersPage() {
     }
   }
 
+  async function changeManager(userId: string, managerId: string | null) {
+    if (!token) return;
+    setUpdatingManagerId(userId);
+    try {
+      await apiRequest(`/admin/users/${userId}`, { method: "PATCH", body: JSON.stringify({ manager_id: managerId || null }) }, token);
+      setUsers((prev) => prev.map((u) => (u.id === userId ? { ...u, manager_id: managerId || null } : u)));
+    } catch {
+      // keep previous
+    } finally {
+      setUpdatingManagerId(null);
+    }
+  }
+
   const filtered = search.trim()
     ? users.filter(
         (u) =>
@@ -100,7 +126,7 @@ export default function AdminUsersPage() {
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="page-title">All Users</h1>
-          <p className="page-subtitle">{search.trim() ? filtered.length + " of " + total : total} user{total !== 1 ? "s" : ""} total</p>
+          <p className="page-subtitle">{search.trim() ? filtered.length + " of " + total : total} user{total !== 1 ? "s" : ""} total. Change direct report below; role changes apply after the user logs out and back in.</p>
         </div>
         <input
           type="search"
@@ -127,6 +153,7 @@ export default function AdminUsersPage() {
                 <th className="p-2">Name</th>
                 <th className="p-2">Email</th>
                 <th className="p-2">Role</th>
+                <th className="p-2">Direct report</th>
                 <th className="p-2">Status</th>
                 <th className="p-2">Approved</th>
                 <th className="p-2">Created</th>
@@ -152,6 +179,19 @@ export default function AdminUsersPage() {
                     </select>
                   </td>
                   <td className="p-2">
+                    <select
+                      value={u.manager_id || ""}
+                      onChange={(e) => changeManager(u.id, e.target.value || null)}
+                      disabled={!!updatingManagerId}
+                      className="rounded border border-slate-600 bg-slate-800 px-2 py-1 text-sm text-slate-200 min-w-[140px]"
+                    >
+                      <option value="">— None —</option>
+                      {managers.filter((m) => m.id !== u.id).map((m) => (
+                        <option key={m.id} value={m.id}>{m.first_name} {m.last_name}</option>
+                      ))}
+                    </select>
+                  </td>
+                  <td className="p-2">
                     <span
                       className={`rounded px-2 py-0.5 text-xs ${
                         u.status === "active"
@@ -172,7 +212,7 @@ export default function AdminUsersPage() {
               ))}
               {filtered.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="py-12 text-center text-slate-500">
+                  <td colSpan={7} className="py-12 text-center text-slate-500">
                     {search.trim() ? "No users match your search." : "No users."}
                   </td>
                 </tr>

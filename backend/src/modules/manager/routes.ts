@@ -1,12 +1,15 @@
 import { Router } from "express";
 import { authenticateJWT, AuthRequest, requireRole } from "../../middleware/auth";
-import { getTeamSchedulesByManager } from "../schedules/repository";
+import { runInTransaction } from "../../db/pool";
+import { getTeamSchedulesByManager, upsertSchedule, updateSchedule, batchUpsertSchedules, getScheduleByUserAndDate } from "../schedules/repository";
+import { schedulePutBodySchema, scheduleBatchBodySchema } from "../schedules/schema";
 import { createNotification } from "../notifications/repository";
 import { approveAgentAndSetTempPassword, setTempPasswordForUser } from "../auth/service";
 import { approveLeave } from "../leave/service";
 import { getOpenAuxForUser, closeAux, createAux } from "../auxlogs/repository";
 import { lockAttendanceRecords, hasLockedAttendanceForUserAndDate } from "../attendance/repository";
 import { daysAgo } from "../../utils/dateHelpers";
+import { logAudit } from "../../lib/audit";
 import * as repo from "./repository";
 import * as svc from "./service";
 
@@ -305,6 +308,7 @@ router.post("/leave/:id/reject", async (req: AuthRequest, res) => {
     const leave = await repo.getLeaveRequestForReject(id, managerId);
     if (!leave) return res.status(404).json({ error: { message: "Leave request not found or not in your team" } });
     await repo.rejectLeaveRequest(id, managerId);
+    await logAudit("leave.reject", managerId, { leave_id: id, target_user_id: leave.user_id }, req.ip);
     await createNotification(leave.user_id, "Your leave request has been rejected.", "leave_rejected");
     return res.json({ message: "Leave rejected" });
   } catch (err: any) {
@@ -322,6 +326,82 @@ router.get("/schedule/team", async (req: AuthRequest, res) => {
     return res.json(list);
   } catch (err: any) {
     return res.status(400).json({ error: { message: err.message || "Failed to fetch schedule" } });
+  }
+});
+
+router.put("/schedule", async (req: AuthRequest, res) => {
+  const managerId = req.user!.sub;
+  const parsed = schedulePutBodySchema.safeParse(req.body);
+  if (!parsed.success) {
+    const msg = parsed.error.errors?.[0]?.message ?? "Validation failed";
+    return res.status(400).json({ error: { message: msg } });
+  }
+  const { id, version, user_id, date, shift_start, shift_end, day_type } = parsed.data;
+  const u = await repo.getUserByManager(user_id, managerId);
+  if (!u) return res.status(403).json({ error: { message: "Agent not in your team" } });
+  const params = {
+    userId: user_id,
+    date,
+    projectId: parsed.data.project_id ?? null,
+    shiftStart: shift_start ?? null,
+    shiftEnd: shift_end ?? null,
+    break1Start: parsed.data.break_1_start ?? null,
+    break1End: parsed.data.break_1_end ?? null,
+    break2Start: parsed.data.break_2_start ?? null,
+    break2End: parsed.data.break_2_end ?? null,
+    break3Start: parsed.data.break_3_start ?? null,
+    break3End: parsed.data.break_3_end ?? null,
+    dayType: day_type || "work",
+  };
+  try {
+    if (id != null && version != null) {
+      const existing = await getScheduleByUserAndDate(user_id, date);
+      if (!existing || existing.id !== id) return res.status(400).json({ error: { message: "Schedule not found" } });
+      const row = await updateSchedule(id, version, params);
+      await logAudit("schedule.update", managerId, { schedule_id: row.id, target_user_id: user_id, date, scope: "manager" }, req.ip);
+      return res.json(row);
+    }
+    const row = await upsertSchedule(params);
+    await logAudit("schedule.update", managerId, { schedule_id: row.id, target_user_id: user_id, date, scope: "manager" }, req.ip);
+    return res.json(row);
+  } catch (err: any) {
+    if (err?.message === "CONFLICT") return res.status(409).json({ error: { message: "Schedule was updated by someone else; refresh and try again." } });
+    return res.status(400).json({ error: { message: err.message || "Failed" } });
+  }
+});
+
+router.post("/schedule/batch", async (req: AuthRequest, res) => {
+  const managerId = req.user!.sub;
+  const parsed = scheduleBatchBodySchema.safeParse(req.body);
+  if (!parsed.success) {
+    const msg = parsed.error.errors?.[0]?.message ?? "Validation failed";
+    return res.status(400).json({ error: { message: msg } });
+  }
+  const list = parsed.data.schedules;
+  for (const s of list) {
+    const u = await repo.getUserByManager(s.user_id, managerId);
+    if (!u) return res.status(403).json({ error: { message: `Agent ${s.user_id} not in your team` } });
+  }
+  const items = list.map((s) => ({
+    userId: s.user_id,
+    date: s.date,
+    projectId: s.project_id ?? null,
+    shiftStart: s.shift_start ?? null,
+    shiftEnd: s.shift_end ?? null,
+    break1Start: s.break_1_start ?? null,
+    break1End: s.break_1_end ?? null,
+    break2Start: s.break_2_start ?? null,
+    break2End: s.break_2_end ?? null,
+    break3Start: s.break_3_start ?? null,
+    break3End: s.break_3_end ?? null,
+    dayType: s.day_type || "work",
+  }));
+  try {
+    const result = await runInTransaction((client) => batchUpsertSchedules(items, client));
+    await logAudit("schedule.batch", managerId, { inserted: result.inserted, updated: result.updated, scope: "manager" }, req.ip);
+    return res.json({ inserted: result.inserted, updated: result.updated });
+  } catch (err: any) {
+    return res.status(400).json({ error: { message: err.message || "Batch failed" } });
   }
 });
 
@@ -343,7 +423,7 @@ router.post("/schedule-activities", async (req: AuthRequest, res) => {
     return res.status(400).json({ error: { message: "type must be coaching, meeting, or training" } });
   }
   try {
-    const u = await repo.checkUserByManager(user_id, managerId);
+    const u = await repo.getUserByManager(user_id, managerId);
     if (!u) return res.status(403).json({ error: { message: "Agent not in your team" } });
     const row = await repo.createScheduleActivity(user_id, activity_date, type, start_at, end_at, title ?? null, notes ?? null, managerId);
     return res.status(201).json(row);
@@ -381,6 +461,7 @@ router.post("/attendance/manual", async (req: AuthRequest, res) => {
     const workedSeconds = clockOutDate ? Math.max(0, Math.floor((clockOutDate.getTime() - clockInDate.getTime()) / 1000)) : 0;
     const totalHours = `${workedSeconds} seconds`;
     const row = await repo.insertAttendanceManual(user_id, clock_in, clock_out || null, totalHours);
+    await logAudit("attendance.manual", managerId, { attendance_id: row.id, target_user_id: user_id, clock_in, clock_out: clock_out || null }, req.ip);
     return res.status(201).json(row);
   } catch (err: any) {
     return res.status(400).json({ error: { message: err.message || "Manual punch failed" } });
@@ -401,9 +482,42 @@ router.patch("/attendance/:id", async (req: AuthRequest, res) => {
     const workedSeconds = cout ? Math.max(0, Math.floor((cout.getTime() - cin.getTime()) / 1000)) : 0;
     const totalHours = `${workedSeconds} seconds`;
     const row = await repo.updateAttendancePunch(id, cin.toISOString(), cout?.toISOString() ?? null, totalHours);
+    await logAudit("attendance.override", managerId, { attendance_id: id, target_user_id: existing.user_id, clock_in: cin.toISOString(), clock_out: cout?.toISOString() ?? null }, req.ip);
     return res.json(row);
   } catch (err: any) {
     return res.status(400).json({ error: { message: err.message || "Update failed" } });
+  }
+});
+
+router.get("/attendance/anomalies", async (req: AuthRequest, res) => {
+  const managerId = req.user!.sub;
+  try {
+    const rows = await repo.getAnomaliesForManager(managerId);
+    return res.json(rows);
+  } catch (err: any) {
+    return res.status(400).json({ error: { message: err.message || "Failed" } });
+  }
+});
+
+router.patch("/attendance/:id/resolve-anomaly", async (req: AuthRequest, res) => {
+  const managerId = req.user!.sub;
+  const { id } = req.params;
+  const { clock_out: clockOutReq } = req.body as { clock_out?: string };
+  if (!clockOutReq) return res.status(400).json({ error: { message: "clock_out required" } });
+  const existing = await repo.getAttendanceByIdAndManager(id, managerId);
+  if (!existing) return res.status(404).json({ error: { message: "Attendance not found or not in your team" } });
+  if (existing.status !== "ANOMALY") return res.status(400).json({ error: { message: "Record is not an anomaly or already resolved" } });
+  try {
+    const clockInDate = new Date(existing.clock_in);
+    const clockOutDate = new Date(clockOutReq);
+    const workedSeconds = Math.max(0, Math.floor((clockOutDate.getTime() - clockInDate.getTime()) / 1000));
+    const totalHours = `${workedSeconds} seconds`;
+    const row = await repo.resolveAnomaly(id, managerId, clockOutReq, totalHours);
+    if (!row) return res.status(400).json({ error: { message: "Could not resolve anomaly" } });
+    await logAudit("attendance.anomaly_resolve", managerId, { attendance_id: id, target_user_id: existing.user_id, clock_out: clockOutReq }, req.ip);
+    return res.json(row);
+  } catch (err: any) {
+    return res.status(400).json({ error: { message: err.message || "Resolve failed" } });
   }
 });
 

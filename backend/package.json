@@ -9,7 +9,12 @@
     "start": "node dist/index.js",
     "setup-db": "node scripts/setup-db.js",
     "migrate:acid": "node scripts/run-migration.js sql/migrations_acid_occ_exceptions.sql",
-    "migrate:enterprise": "node scripts/run-migration.js sql/migrations_enterprise_fixes.sql"
+    "migrate:enterprise": "node scripts/run-migration.js sql/migrations_enterprise_fixes.sql",
+    "migrate:availability": "node scripts/run-migration.js sql/migrations_availability_preferences.sql",
+    "migrate:labor-rules": "node scripts/run-migration.js sql/migrations_labor_rules.sql",
+    "migrate:location-timezones": "node scripts/run-migration.js sql/migrations_location_timezones.sql",
+    "migrate:shift-bidding": "node scripts/run-migration.js sql/migrations_shift_bidding.sql",
+    "migrate:features": "npm run migrate:availability && npm run migrate:labor-rules && npm run migrate:location-timezones && npm run migrate:shift-bidding"
   },
   "keywords": [],
   "author": "",

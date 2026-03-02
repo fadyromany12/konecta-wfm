@@ -1,4 +1,5 @@
 import { runInTransaction, query } from "../../db/pool";
+import { logAudit } from "../../lib/audit";
 import { deductBalance, ensureBalance } from "../leaveBalances/repository";
 import { insertException } from "../scheduleExceptions/repository";
 import { dateRangeArray } from "../../utils/dateHelpers";
@@ -50,6 +51,14 @@ export async function approveLeave(leaveId: string, managerId: string): Promise<
       await ensureBalance(leave.user_id, year, leave.type, days, client);
       await deductBalance(leave.user_id, year, leave.type, days, client);
     }
+
+    await logAudit("leave.approve", managerId, {
+      leave_id: leaveId,
+      target_user_id: leave.user_id,
+      type: leave.type,
+      start_date: leave.start_date,
+      end_date: leave.end_date,
+    }, undefined, client);
   });
   return { userId: userId! };
 }

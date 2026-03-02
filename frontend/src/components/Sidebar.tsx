@@ -12,6 +12,7 @@ const agentNav = [
   { href: "/agent/schedule", label: "Schedule" },
   { href: "/agent/requests", label: "My Requests" },
   { href: "/agent/swap", label: "Swap Shifts" },
+  { href: "/shift-bidding", label: "Shift Bidding" },
   { href: "/agent/projects", label: "My Projects" },
   { href: "/grid", label: "Activity Grid" },
   { href: "/org-view", label: "Org View" },
@@ -24,7 +25,9 @@ const managerNav = [
   { href: "/manager/approvals", label: "Approvals" },
   { href: "/manager/transfers", label: "Transfers" },
   { href: "/manager/reports", label: "Reports" },
+  { href: "/manager/anomalies", label: "Timesheet Anomalies" },
   { href: "/manager/schedule", label: "Schedule" },
+  { href: "/shift-bidding", label: "Shift Bidding" },
   { href: "/manager/team", label: "Team Members" },
   { href: "/manager/activities", label: "Coachings & Meetings" },
   { href: "/manager/hierarchy", label: "Hierarchy" },
@@ -58,6 +61,7 @@ const projectManagerNav = [
 
 const rtaNav = [
   { href: "/rta/dashboard", label: "Scheduler" },
+  { href: "/admin/schedule", label: "Build schedule" },
   { href: "/grid", label: "Activity Grid" },
   { href: "/profile", label: "Profile" },
 ];

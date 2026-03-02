@@ -7,7 +7,7 @@ const router = Router();
 router.get("/", authenticateJWT, requireRole(["admin"]), async (req: AuthRequest, res) => {
   try {
     const { rows } = await query(
-      "SELECT p.*, (SELECT count(*) FROM project_managers pm WHERE pm.project_id = p.id) AS pm_count FROM projects p ORDER BY p.name"
+      "SELECT p.id, p.name, p.description, p.created_at, p.created_by, (SELECT count(*)::int FROM project_managers pm WHERE pm.project_id = p.id) AS pm_count FROM projects p ORDER BY p.name"
     );
     return res.json(rows);
   } catch (err: any) {

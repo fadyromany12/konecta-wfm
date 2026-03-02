@@ -323,11 +323,46 @@ export async function createScheduleActivity(
 
 export async function getAttendanceByIdAndManager(attendanceId: string, managerId: string, client?: PoolClient) {
   const { rows } = await query(
-    `SELECT a.user_id, a.clock_in, a.clock_out, a.timesheet_approved FROM attendance a JOIN users u ON u.id = a.user_id WHERE a.id = $1 AND u.manager_id = $2`,
+    `SELECT a.user_id, a.clock_in, a.clock_out, a.timesheet_approved, a.status FROM attendance a JOIN users u ON u.id = a.user_id WHERE a.id = $1 AND u.manager_id = $2`,
     [attendanceId, managerId],
     client,
   );
   return rows[0];
+}
+
+/** List attendance records with status = 'ANOMALY' for the manager's team (for Timesheet Anomalies dashboard). */
+export async function getAnomaliesForManager(managerId: string, client?: PoolClient) {
+  const { rows } = await query(
+    `SELECT a.id, a.user_id, a.clock_in, a.clock_out, a.total_hours, a.status, a.shift_date,
+            u.first_name, u.last_name, u.email
+     FROM attendance a
+     JOIN users u ON u.id = a.user_id
+     WHERE a.status = 'ANOMALY' AND u.manager_id = $1
+     ORDER BY a.clock_in DESC`,
+    [managerId],
+    client,
+  );
+  return rows;
+}
+
+/** Resolve an anomaly: set clock_out, total_hours, and status = 'ACTIVE'. Only for ANOMALY records in manager's team. */
+export async function resolveAnomaly(
+  attendanceId: string,
+  managerId: string,
+  clock_out: string,
+  total_hours: string,
+  client?: PoolClient,
+) {
+  const { rows } = await query(
+    `UPDATE attendance a
+     SET clock_out = $2, total_hours = $3::interval, status = 'ACTIVE'
+     FROM users u
+     WHERE a.user_id = u.id AND u.manager_id = $4 AND a.id = $1 AND a.status = 'ANOMALY'
+     RETURNING a.*`,
+    [attendanceId, clock_out, total_hours, managerId],
+    client,
+  );
+  return rows[0] ?? null;
 }
 
 export async function updateAttendancePunch(

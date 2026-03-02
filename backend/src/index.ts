@@ -28,6 +28,10 @@ import departmentsRoutes from "./modules/departments/routes";
 import announcementsRoutes from "./modules/announcements/routes";
 import wallboardRoutes from "./modules/wallboard/routes";
 import settingsRoutes from "./modules/settings/routes";
+import availabilityRoutes from "./modules/availability/routes";
+import laborRulesRoutes from "./modules/laborRules/routes";
+import shiftBiddingRoutes from "./modules/shiftBidding/routes";
+import autoScheduleRoutes from "./modules/autoSchedule/routes";
 import { errorHandler } from "./middleware/errorHandler";
 
 const app = express();
@@ -85,6 +89,10 @@ app.use("/api/departments", departmentsRoutes);
 app.use("/api/announcements", announcementsRoutes);
 app.use("/api/wallboard", wallboardRoutes);
 app.use("/api/settings", settingsRoutes);
+app.use("/api/availability", availabilityRoutes);
+app.use("/api/labor-rules", laborRulesRoutes);
+app.use("/api/shift-bidding", shiftBiddingRoutes);
+app.use("/api/auto-schedule", autoScheduleRoutes);
 
 app.use(errorHandler);
 

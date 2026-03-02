@@ -70,13 +70,14 @@ export default function ManagerTransfersPage() {
     setError(null);
     try {
       const [teamRes, managersRes, mineRes, pendingRes, allRes] = await Promise.all([
-        user.role === "manager" ? apiRequest<TeamMember[]>("/manager/team", {}, token) : Promise.resolve([]),
+        user.role === "manager" ? apiRequest<TeamMember[] | { data?: TeamMember[] }>("/manager/team?limit=500", {}, token) : Promise.resolve([]),
         apiRequest<ManagerOption[]>("/manager/managers-list", {}, token),
         apiRequest<TransferRequest[]>("/manager/transfer-requests?filter=mine", {}, token),
         apiRequest<TransferRequest[]>("/manager/transfer-requests?filter=pending_approval", {}, token),
         apiRequest<TransferRequest[]>("/manager/transfer-requests?filter=all", {}, token),
       ]);
-      setTeam(Array.isArray(teamRes) ? teamRes : []);
+      const teamList = Array.isArray(teamRes) ? teamRes : (teamRes && typeof teamRes === "object" ? (teamRes as { data?: TeamMember[] }).data ?? [] : []);
+      setTeam(Array.isArray(teamList) ? teamList : []);
       setManagersList(Array.isArray(managersRes) ? managersRes : []);
       setMyRequests(Array.isArray(mineRes) ? mineRes : []);
       setPendingApproval(Array.isArray(pendingRes) ? pendingRes : []);
@@ -138,7 +139,16 @@ export default function ManagerTransfersPage() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-semibold text-slate-50">Reporting Line & Transfers</h1>
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <h1 className="text-2xl font-semibold text-slate-50">Reporting Line & Transfers</h1>
+        <button
+          type="button"
+          onClick={() => setTab("transfer")}
+          className="btn-primary"
+        >
+          Initiate transfer
+        </button>
+      </div>
       {error && <p className="rounded-lg bg-red-500/15 px-4 py-2 text-sm text-red-400">{error}</p>}
       {success && <p className="rounded-lg bg-emerald-500/15 px-4 py-2 text-sm text-emerald-400">{success}</p>}
 

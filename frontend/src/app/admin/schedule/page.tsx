@@ -61,21 +61,28 @@ export default function AdminSchedulePage() {
     } catch { return []; }
   });
   const [filterGroup, setFilterGroup] = useState<string>("");
+  const [conflictCell, setConflictCell] = useState<{
+    userId: string;
+    date: string;
+    serverSchedule: ScheduleRow;
+    local: { shiftStart: string; shiftEnd: string; dayType: string };
+  } | null>(null);
 
   useEffect(() => {
     if (!user) router.replace("/login");
-    else if (user.role !== "admin") router.replace("/");
+    else if (user.role !== "admin" && user.role !== "rta") router.replace("/");
   }, [user, router]);
 
   useEffect(() => {
-    if (!token || user?.role !== "admin") return;
+    if (!token || (user?.role !== "admin" && user?.role !== "rta")) return;
     Promise.all([
-      apiRequest<UserRow[]>("/admin/users", {}, token),
+      apiRequest<{ data?: UserRow[] } | UserRow[]>("/admin/users?limit=500", {}, token),
       apiRequest<ScheduleRow[]>(`/admin/schedules?from=${from}&to=${to}`, {}, token),
     ])
-      .then(([u, s]) => {
-        setUsers(u);
-        setSchedules(s);
+      .then(([uRes, s]) => {
+        const u = Array.isArray(uRes) ? uRes : (uRes && typeof uRes === "object" ? (uRes.data ?? []) : []);
+        setUsers(Array.isArray(u) ? u : []);
+        setSchedules(Array.isArray(s) ? s : []);
       })
       .catch(() => {})
       .finally(() => setLoading(false));
@@ -187,9 +194,12 @@ export default function AdminSchedulePage() {
     [agentList, filterGroup, savedGroups],
   );
 
+  const apiBase = typeof window !== "undefined" ? "/api/proxy" : (process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:4000/api");
+
   async function saveCell(userId: string, date: string, shiftStart: string, shiftEnd: string, dayType: string) {
     if (!token) return;
     setSaving(true);
+    setConflictCell(null);
     const existing = scheduleMap.get(`${userId}:${date}`);
     const body: Record<string, unknown> = {
       user_id: userId,
@@ -203,21 +213,66 @@ export default function AdminSchedulePage() {
       body.version = existing.version;
     }
     try {
-      await apiRequest("/admin/schedules", { method: "PUT", body: JSON.stringify(body) }, token);
-      setEditCell(null);
-      const res = await apiRequest<ScheduleRow[]>(`/admin/schedules?from=${from}&to=${to}`, {}, token);
-      setSchedules(res);
-    } catch (e) {
-      const msg = (e as Error).message;
-      if (msg.includes("updated by someone else") || msg.includes("Conflict")) {
-        toast.error("Schedule modified by another user. Please refresh.");
-        const res = await apiRequest<ScheduleRow[]>(`/admin/schedules?from=${from}&to=${to}`, {}, token);
-        setSchedules(res);
-        setEditCell(null);
+      const res = await fetch(`${apiBase}/admin/schedules`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.status === 409 && data.server_schedule) {
+        setConflictCell({
+          userId,
+          date,
+          serverSchedule: data.server_schedule,
+          local: { shiftStart, shiftEnd, dayType },
+        });
+        setSaving(false);
+        return;
       }
+      if (!res.ok) throw new Error(data?.error?.message || "Save failed");
+      setEditCell(null);
+      const list = await apiRequest<ScheduleRow[]>(`/admin/schedules?from=${from}&to=${to}`, {}, token);
+      setSchedules(list);
+      toast.success("Saved");
+    } catch (e) {
+      toast.error((e as Error).message);
     } finally {
       setSaving(false);
     }
+  }
+
+  async function forceOverwriteCell() {
+    if (!token || !conflictCell) return;
+    setSaving(true);
+    const { serverSchedule, local } = conflictCell;
+    const body = {
+      id: serverSchedule.id,
+      force_overwrite: true,
+      user_id: conflictCell.userId,
+      date: conflictCell.date,
+      shift_start: local.shiftStart ? `${conflictCell.date}T${local.shiftStart}:00` : null,
+      shift_end: local.shiftEnd ? `${conflictCell.date}T${local.shiftEnd}:00` : null,
+      day_type: local.dayType,
+    };
+    try {
+      await apiRequest("/admin/schedules", { method: "PUT", body: JSON.stringify(body) }, token);
+      setConflictCell(null);
+      setEditCell(null);
+      const list = await apiRequest<ScheduleRow[]>(`/admin/schedules?from=${from}&to=${to}`, {}, token);
+      setSchedules(list);
+      toast.success("Schedule overwritten");
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function closeConflictAndRefresh() {
+    if (!token) return;
+    setConflictCell(null);
+    setEditCell(null);
+    apiRequest<ScheduleRow[]>(`/admin/schedules?from=${from}&to=${to}`, {}, token).then(setSchedules);
   }
 
   const scheduleMap = useMemo(() => {
@@ -242,6 +297,9 @@ export default function AdminSchedulePage() {
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-semibold text-slate-50">Schedule Management</h1>
+      <p className="text-slate-400 text-sm max-w-2xl">
+        Build and edit shifts for agents. Choose a date range below, then click a cell to add or edit a shift (start, end, day type). Use Copy row/column to duplicate, or the bulk actions for import, clear week, copy previous week, and auto-fill from availability.
+      </p>
 
       <div className="card space-y-4">
         <h2 className="text-lg font-medium text-slate-200">Bulk import (CSV)</h2>
@@ -289,6 +347,69 @@ export default function AdminSchedulePage() {
                 <option key={g.name} value={g.name}>{g.name}</option>
               ))}
             </select>
+          </div>
+          <div className="flex items-end gap-2">
+            <button
+              type="button"
+              onClick={async () => {
+                if (!token) return;
+                try {
+                  await apiRequest("/admin/schedules/publish", { method: "POST", body: JSON.stringify({ from, to }) }, token);
+                  toast.success("Schedule published for selected range");
+                } catch (e) { toast.error((e as Error).message); }
+              }}
+              className="btn-secondary text-sm"
+            >
+              Publish Schedule
+            </button>
+            <button
+              type="button"
+              onClick={async () => {
+                if (!token || !confirm("Clear all schedules in this date range? This cannot be undone.")) return;
+                try {
+                  const r = await apiRequest<{ deleted: number }>("/admin/schedules/clear", { method: "POST", body: JSON.stringify({ from, to }) }, token);
+                  toast.success(`Cleared ${r.deleted} schedule(s)`);
+                  const list = await apiRequest<ScheduleRow[]>(`/admin/schedules?from=${from}&to=${to}`, {}, token);
+                  setSchedules(list);
+                } catch (e) { toast.error((e as Error).message); }
+              }}
+              className="btn-secondary text-sm"
+            >
+              Clear Week
+            </button>
+            <button
+              type="button"
+              onClick={async () => {
+                if (!token) return;
+                try {
+                  const r = await apiRequest<{ inserted: number; updated: number }>("/admin/schedules/copy-week", { method: "POST", body: JSON.stringify({ from, to }) }, token);
+                  toast.success(`Copied previous week: ${r.inserted} inserted, ${r.updated} updated`);
+                  const list = await apiRequest<ScheduleRow[]>(`/admin/schedules?from=${from}&to=${to}`, {}, token);
+                  setSchedules(list);
+                } catch (e) { toast.error((e as Error).message); }
+              }}
+              className="btn-secondary text-sm"
+            >
+              Copy Previous Week
+            </button>
+            <button
+              type="button"
+              onClick={async () => {
+                if (!token) return;
+                try {
+                  const r = await apiRequest<{ suggested: { user_id: string; date: string; shift_start: string; shift_end: string }[]; message: string }>("/auto-schedule/suggest", { method: "POST", body: JSON.stringify({ from, to }) }, token);
+                  if (!r.suggested?.length) { toast.info(r.message || "No suggestions"); return; }
+                  const schedules = r.suggested.map((s) => ({ user_id: s.user_id, date: s.date, shift_start: s.shift_start, shift_end: s.shift_end, day_type: "work" }));
+                  await apiRequest("/admin/schedules/batch", { method: "POST", body: JSON.stringify({ schedules }) }, token);
+                  toast.success(`Applied ${r.suggested.length} suggested shift(s)`);
+                  const list = await apiRequest<ScheduleRow[]>(`/admin/schedules?from=${from}&to=${to}`, {}, token);
+                  setSchedules(list);
+                } catch (e) { toast.error((e as Error).message); }
+              }}
+              className="btn-secondary text-sm"
+            >
+              Auto-fill from availability
+            </button>
           </div>
         </div>
         <p className="text-xs text-slate-500">
@@ -369,6 +490,45 @@ export default function AdminSchedulePage() {
           </div>
         </div>
       </div>
+
+      {conflictCell && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={closeConflictAndRefresh}>
+          <div className="card w-full max-w-lg p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <h2 className="text-lg font-semibold text-amber-400 mb-2">Schedule conflict</h2>
+            <p className="text-sm text-slate-400 mb-4">This cell was changed by someone else. Compare and choose an action.</p>
+            <table className="w-full border-collapse text-sm mb-4">
+              <thead>
+                <tr className="border-b border-slate-600 text-slate-400">
+                  <th className="text-left p-2"></th>
+                  <th className="text-left p-2">Server (current)</th>
+                  <th className="text-left p-2">Your version</th>
+                </tr>
+              </thead>
+              <tbody className="text-slate-300">
+                <tr className="border-b border-slate-700">
+                  <td className="p-2 font-medium">Start</td>
+                  <td className="p-2">{conflictCell.serverSchedule.shift_start ? new Date(conflictCell.serverSchedule.shift_start).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "—"}</td>
+                  <td className="p-2">{conflictCell.local.shiftStart || "—"}</td>
+                </tr>
+                <tr className="border-b border-slate-700">
+                  <td className="p-2 font-medium">End</td>
+                  <td className="p-2">{conflictCell.serverSchedule.shift_end ? new Date(conflictCell.serverSchedule.shift_end).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "—"}</td>
+                  <td className="p-2">{conflictCell.local.shiftEnd || "—"}</td>
+                </tr>
+                <tr className="border-b border-slate-700">
+                  <td className="p-2 font-medium">Day type</td>
+                  <td className="p-2">{conflictCell.serverSchedule.day_type}</td>
+                  <td className="p-2">{conflictCell.local.dayType}</td>
+                </tr>
+              </tbody>
+            </table>
+            <div className="flex gap-2 justify-end">
+              <button type="button" onClick={closeConflictAndRefresh} className="rounded bg-slate-600 px-4 py-2 text-slate-200 hover:bg-slate-500">Refresh (use server)</button>
+              <button type="button" onClick={forceOverwriteCell} disabled={saving} className="rounded bg-amber-600 px-4 py-2 text-white hover:bg-amber-500 disabled:opacity-50">Force overwrite</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

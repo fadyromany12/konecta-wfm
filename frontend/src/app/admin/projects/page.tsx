@@ -62,16 +62,19 @@ export default function AdminProjectsPage() {
   async function load() {
     if (!token) return;
     setLoading(true);
+    setError(null);
     try {
       const [projRes, usersRes] = await Promise.all([
-        apiRequest<Project[] | { data?: Project[] }>("/projects", {}, token),
+        apiRequest<Project[] | { data?: Project[]; items?: Project[] }>("/projects", {}, token),
         apiRequest<UserRow[] | { data?: UserRow[] }>("/admin/users?limit=500", {}, token),
       ]);
-      setProjects(Array.isArray(projRes) ? projRes : (projRes?.data ?? []));
+      const projList = Array.isArray(projRes) ? projRes : (projRes && typeof projRes === "object" ? (projRes.data ?? projRes.items ?? []) : []);
+      setProjects(Array.isArray(projList) ? projList : []);
       setUsers(Array.isArray(usersRes) ? usersRes : (usersRes?.data ?? []));
-    } catch {
+    } catch (e) {
       setProjects([]);
       setUsers([]);
+      setError((e as Error)?.message || "Failed to load projects");
     } finally {
       setLoading(false);
     }
@@ -314,7 +317,15 @@ export default function AdminProjectsPage() {
 
       <div className="card overflow-auto">
         {loading ? (
-          <p className="text-slate-400">Loading...</p>
+          <p className="text-slate-400">Loading projects...</p>
+        ) : projects.length === 0 ? (
+          <div className="rounded-lg border border-slate-700 bg-slate-800/30 p-8 text-center">
+            <p className="mb-2 text-slate-300">No projects yet.</p>
+            <p className="mb-4 text-sm text-slate-500">Create a project to assign project managers and RTAs.</p>
+            <button type="button" onClick={() => { setShowForm(true); setEditingId(null); setFormName(""); setFormDesc(""); setError(null); }} className="btn-primary">
+              Create first project
+            </button>
+          </div>
         ) : (
           <table className="w-full border-collapse text-sm">
             <thead>
@@ -340,11 +351,6 @@ export default function AdminProjectsPage() {
                   </td>
                 </tr>
               ))}
-              {projects.length === 0 && (
-                <tr>
-                  <td colSpan={4} className="p-4 text-center text-slate-500">No projects yet.</td>
-                </tr>
-              )}
             </tbody>
           </table>
         )}
@@ -352,3 +358,4 @@ export default function AdminProjectsPage() {
     </div>
   );
 }
+

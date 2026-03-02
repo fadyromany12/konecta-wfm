@@ -58,7 +58,18 @@ router.get("/activity", requireRole(["agent", "manager", "admin", "project_manag
 
     const userIds = users.map((u) => u.id);
 
-    const [attendanceAll, auxAll, scheduleAll, activityAll] = await Promise.all([
+    const dateObj = new Date(date + "T12:00:00");
+    const weekStart = new Date(dateObj);
+    weekStart.setDate(weekStart.getDate() - weekStart.getDay());
+    const weekEnd = new Date(weekStart);
+    weekEnd.setDate(weekEnd.getDate() + 6);
+    const weekStartStr = weekStart.toISOString().slice(0, 10);
+    const weekEndStr = weekEnd.toISOString().slice(0, 10);
+    const prevDate = new Date(dateObj);
+    prevDate.setDate(prevDate.getDate() - 1);
+    const prevDateStr = prevDate.toISOString().slice(0, 10);
+
+    const [attendanceAll, auxAll, scheduleAll, activityAll, weeklyHoursAll, prevDayLastOut] = await Promise.all([
       query<{ user_id: string; clock_in: string; clock_out: string | null; is_late: boolean }>(
         `SELECT user_id, clock_in, clock_out, is_late FROM attendance WHERE user_id = ANY($1::uuid[]) AND shift_date = $2`,
         [userIds, date],
@@ -71,6 +82,14 @@ router.get("/activity", requireRole(["agent", "manager", "admin", "project_manag
       query<{ user_id: string; type: string; start_at: string; end_at: string; title: string | null }>(
         `SELECT user_id, type, start_at, end_at, title FROM schedule_activities WHERE user_id = ANY($1::uuid[]) AND activity_date = $2 ORDER BY start_at`,
         [userIds, date],
+      ),
+      query<{ user_id: string; total_hours: number }>(
+        `SELECT user_id, COALESCE(SUM(EXTRACT(EPOCH FROM total_hours) / 3600), 0)::numeric AS total_hours FROM attendance WHERE user_id = ANY($1::uuid[]) AND shift_date >= $2 AND shift_date <= $3 AND clock_out IS NOT NULL GROUP BY user_id`,
+        [userIds, weekStartStr, weekEndStr],
+      ),
+      query<{ user_id: string; clock_out: string }>(
+        `SELECT user_id, MAX(clock_out)::text AS clock_out FROM attendance WHERE user_id = ANY($1::uuid[]) AND shift_date = $2 AND clock_out IS NOT NULL GROUP BY user_id`,
+        [userIds, prevDateStr],
       ),
     ]);
 
@@ -97,6 +116,17 @@ router.get("/activity", requireRole(["agent", "manager", "admin", "project_manag
       list.push({ type: r.type, start_at: r.start_at, end_at: r.end_at, title: r.title });
       activityByUser.set(r.user_id, list);
     }
+    const weeklyHoursByUser = new Map<string, number>();
+    for (const r of weeklyHoursAll.rows as { user_id: string; total_hours: string }[]) {
+      weeklyHoursByUser.set(r.user_id, parseFloat(r.total_hours));
+    }
+    const prevLastOutByUser = new Map<string, string>();
+    for (const r of prevDayLastOut.rows as { user_id: string; clock_out: string }[]) {
+      prevLastOutByUser.set(r.user_id, r.clock_out);
+    }
+
+    const WEEKLY_MAX_HOURS = 48;
+    const MIN_REST_HOURS = 11;
 
     const result: UserGrid[] = [];
     for (const u of users) {
@@ -189,6 +219,15 @@ router.get("/activity", requireRole(["agent", "manager", "admin", "project_manag
 
       const firstAttendance = attendanceRows[0];
       if (firstAttendance?.is_late) violations.push({ type: "lateness", description: "Clock-in was after scheduled start" });
+
+      const weeklyHours = weeklyHoursByUser.get(u.id) ?? 0;
+      if (weeklyHours > WEEKLY_MAX_HOURS) violations.push({ type: "weekly_hours", description: `Weekly hours (${weeklyHours.toFixed(1)}h) exceed ${WEEKLY_MAX_HOURS}h` });
+
+      const lastPrevOut = prevLastOutByUser.get(u.id);
+      if (lastPrevOut && firstAttendance?.clock_in) {
+        const restHours = (new Date(firstAttendance.clock_in).getTime() - new Date(lastPrevOut).getTime()) / (1000 * 60 * 60);
+        if (restHours < MIN_REST_HOURS && restHours > 0) violations.push({ type: "min_rest", description: `Rest between shifts (${restHours.toFixed(1)}h) less than ${MIN_REST_HOURS}h` });
+      }
 
       events.sort((a, b) => new Date(a.start).getTime() - new Date(b.start).getTime());
 

@@ -241,8 +241,8 @@ export default function AgentRequestsPage() {
             {list.map((r) => (
               <tr key={r.id} className="border-b border-slate-800">
                 <td className="p-2 capitalize">{safeLabel(r.type)}</td>
-                <td className="p-2">{r.start_date}</td>
-                <td className="p-2">{r.end_date}</td>
+                <td className="p-2">{formatDateOnly(r.start_date)}</td>
+                <td className="p-2">{formatDateOnly(r.end_date)}</td>
                 <td className="p-2">
                   <span
                     className={`rounded px-2 py-0.5 text-xs ${

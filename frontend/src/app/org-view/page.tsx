@@ -7,7 +7,8 @@ import { apiRequest } from "../../lib/api";
 
 type ManagerAbove = { id: string; first_name: string; last_name: string; email: string; role: string; level: number };
 type Colleague = { id: string; first_name: string; last_name: string; email: string; role: string };
-type OrgViewData = { me: { id: string; first_name: string; last_name: string; email: string; role: string }; managersAbove: ManagerAbove[]; colleagues: Colleague[] };
+type ReporteeNode = { id: string; first_name: string; last_name: string; email: string; role: string; reportees?: ReporteeNode[] };
+type OrgViewData = { me: { id: string; first_name: string; last_name: string; email: string; role: string }; managersAbove: ManagerAbove[]; colleagues: Colleague[]; directReports?: Colleague[]; reporteesTree?: ReporteeNode[] };
 
 export default function OrgViewPage() {
   const router = useRouter();
@@ -24,8 +25,9 @@ export default function OrgViewPage() {
       setLoading(true);
       setError(null);
       try {
-        const res = await apiRequest<OrgViewData>("/me/org-view", {}, token);
-        setData(res);
+        const res = await apiRequest<OrgViewData | { data?: OrgViewData }>("/me/org-view", {}, token);
+        const payload = res && typeof res === "object" && "data" in res ? (res as { data?: OrgViewData }).data : res;
+        setData(payload && typeof payload === "object" ? (payload as OrgViewData) : null);
       } catch { setData(null); setError("Failed to load org view"); }
       finally { setLoading(false); }
     })();
@@ -33,13 +35,30 @@ export default function OrgViewPage() {
 
   if (!user) return null;
 
+  function ReporteeTree({ nodes, level = 0 }: { nodes: ReporteeNode[]; level?: number }) {
+    if (!nodes?.length) return null;
+    return (
+      <ul className={level > 0 ? "mt-2 ml-4 space-y-2 border-l-2 border-slate-600/50 pl-4" : "space-y-2"}>
+        {nodes.map((n) => (
+          <li key={n.id} className="rounded-lg border border-slate-700 bg-slate-800/50 p-3">
+            <div>
+              <p className="font-medium text-slate-50">{n.first_name} {n.last_name}</p>
+              <p className="text-sm text-slate-400">{n.email} · {n.role}</p>
+            </div>
+            {n.reportees?.length ? <ReporteeTree nodes={n.reportees} level={level + 1} /> : null}
+          </li>
+        ))}
+      </ul>
+    );
+  }
+
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-semibold text-slate-50">Org View</h1>
-      <p className="text-slate-400">Your 3 managers above and colleagues in the same team.</p>
+      <p className="text-slate-400">Managers above you, colleagues, and all your reportees (direct and indirect).</p>
       {error && <p className="rounded-lg bg-red-500/15 px-4 py-2 text-sm text-red-400">{error}</p>}
       {loading ? <p className="text-slate-400">Loading...</p> : data ? (
-        <div className="grid gap-6 md:grid-cols-2">
+        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
           <div className="card">
             <h2 className="mb-4 text-lg font-medium text-slate-50">Managers above you</h2>
             <ul className="space-y-3">
@@ -68,6 +87,29 @@ export default function OrgViewPage() {
               ))}
             </ul>
           </div>
+          {(data.directReports?.length ?? 0) > 0 && (
+            <div className="card">
+              <h2 className="mb-4 text-lg font-medium text-slate-50">My direct reports</h2>
+              <p className="mb-2 text-sm text-slate-400">People who report to you</p>
+              <ul className="space-y-3">
+                {data.directReports!.map((c) => (
+                  <li key={c.id} className="flex items-center gap-3 rounded-lg border border-slate-700 bg-slate-800/50 p-3">
+                    <div>
+                      <p className="font-medium text-slate-50">{c.first_name} {c.last_name}</p>
+                      <p className="text-sm text-slate-400">{c.email} · {c.role}</p>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      ) : null}
+      {data?.reporteesTree?.length ? (
+        <div className="card">
+          <h2 className="mb-4 text-lg font-medium text-slate-50">All my reportees</h2>
+          <p className="mb-2 text-sm text-slate-400">Direct reports and their reportees (full tree)</p>
+          <ReporteeTree nodes={data.reporteesTree} />
         </div>
       ) : null}
     </div>
