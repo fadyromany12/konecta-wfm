@@ -48,7 +48,7 @@ export default function AdminSchedulePage() {
   });
   const [loading, setLoading] = useState(true);
   const [importFile, setImportFile] = useState<File | null>(null);
-  const [importResult, setImportResult] = useState<{ imported: number; errors: string[] } | null>(null);
+  const [importResult, setImportResult] = useState<{ imported: number; updated?: number; errors: string[] } | null>(null);
   const [editCell, setEditCell] = useState<{ userId: string; date: string } | null>(null);
   const [saving, setSaving] = useState(false);
   const [copiedRow, setCopiedRow] = useState<{ userId: string; cells: { date: string; start: string; end: string; dayType: string }[] } | null>(null);
